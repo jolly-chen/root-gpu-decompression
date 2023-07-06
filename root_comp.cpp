@@ -26,12 +26,10 @@ struct result_t {
 result_t Compress(const std::vector<char> &data, int compression_code)
 {
    RNTupleCompressor compressor;
+   result_t result(data.size());
 
-   auto size = compressor.Zip(data.data(), data.size(), compression_code);
-
-   result_t result;
-   char *comp_buffer = (char *)compressor.GetZipBuffer();
-   result.compressed = std::vector(comp_buffer, comp_buffer + size);
+   auto size = compressor.Zip(data.data(), data.size(), compression_code, result.compressed.data());
+   result.compressed.resize(size);
 
    return result;
 }
