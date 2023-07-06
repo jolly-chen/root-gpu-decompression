@@ -1,6 +1,6 @@
 #!/bin/bash
 
-compare() {
+Compare() {
     local input_file=$1
     local method=$2
     local output_file=$3
@@ -8,8 +8,15 @@ compare() {
     ./ll_decomp -f ${input_file} -t ${method} -o ${output_file} && diff ${expected} ${output_file}
 }
 
-compare "input/zeroes_11m.zst" "zstd" "output/zeroes_11m.zstd" "input/zeroes_11m"
+INPUT_FOLDER="input/"
+OUTPUT_FOLDER="output/"
+TEST_FILES=(
+    "uniform_random_100m"
+    "gauss_random_100m"
+    "ones_100"
+)
 
-compare "input/zeroes_11m.zlib" "zlib" "output/zeroes_11m.zlib" "input/zeroes_11m"
-
-compare "input/zeroes_11m.lz4" "lz4" "output/zeroes_11m.lz4" "input/zeroes_11m"
+for FILE in "${TEST_FILES[@]}"
+do
+   Compare "${INPUT_FOLDER}/${FILE}.root.zst" "zstd" "${OUTPUT_FOLDER}/${FILE}.zst.out" "${INPUT_FOLDER}/${FILE}"
+done
