@@ -13,7 +13,7 @@
 #include "nvcomp/zstd.h"
 #include "nvcomp/lz4.h"
 #include "nvcomp/deflate.h"
-#include "BatchData.cuh"
+#include "ROOTBatchData.cuh"
 
 bool debug = false;
 

@@ -27,18 +27,19 @@ target_link_libraries("${PROJECT_NAME}" PRIVATE nvcomp::nvcomp)
 #################
 
 set(ROOT_DECOMP_SRC_FILES "root_decomp.cu")
-set(ROOT_DECOMP_HEADER_FILES "BatchData.cuh")
+set(ROOT_DECOMP_HEADER_FILES "ROOTBatchData.cuh")
 project(root_decomp  LANGUAGES C CUDA CXX)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 find_package(CUDAToolkit REQUIRED)
 find_package(nvcomp 2.6.1 REQUIRED)
+find_package(ROOT REQUIRED COMPONENTS Core)
 
 add_executable("${PROJECT_NAME}" "${ROOT_DECOMP_SRC_FILES}" "${ROOT_DECOMP_HEADER_FILES}")
 target_include_directories("${PROJECT_NAME}" PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_compile_options("${PROJECT_NAME}" PRIVATE -g -G)
-target_link_libraries("${PROJECT_NAME}" PRIVATE nvcomp::nvcomp)
+target_link_libraries("${PROJECT_NAME}" PRIVATE nvcomp::nvcomp ROOT::Core)
 
 
 ###############

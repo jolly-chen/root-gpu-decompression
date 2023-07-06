@@ -96,7 +96,7 @@ int main(int argc, char *argv[])
       std::cout << "method: zlib" << std::endl;
       result = Compress(data, 101);
    } else {
-      fprintf(stderr, "Unknown decompression type\n");
+      fprintf(stderr, "Unknown decompression type :%s\n", type.c_str());
       return 1;
    }
 
