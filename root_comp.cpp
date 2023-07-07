@@ -13,23 +13,40 @@
 #include "ROOT/RNTupleZip.hxx"
 
 using ROOT::Experimental::Detail::RNTupleCompressor;
+using ROOT::Experimental::Detail::RNTupleDecompressor;
 
-bool debug = false;
+bool verbose = false;
+bool decompress = false;
 
 struct result_t {
-   std::vector<char> compressed;
+   std::vector<char> data;
 
    result_t() {}
-   result_t(size_t compressed_size) : compressed(compressed_size) {}
+   result_t(size_t compressed_size) : data(compressed_size) {}
 };
+
+result_t Decompress(const std::vector<char> &compressed, size_t decomp_size)
+{
+   RNTupleDecompressor decompressor;
+   result_t result(decomp_size);
+
+   decompressor.Unzip(compressed.data(), compressed.size(), decomp_size, result.data.data());
+
+   return result;
+}
 
 result_t Compress(const std::vector<char> &data, int compression_code)
 {
    RNTupleCompressor compressor;
    result_t result(data.size());
 
-   auto size = compressor.Zip(data.data(), data.size(), compression_code, result.compressed.data());
-   result.compressed.resize(size);
+   auto size = compressor.Zip(data.data(), data.size(), compression_code, result.data.data());
+   result.data.resize(size);
+   printf("Returned compression size: %ld\n", size);
+
+   if (decompress) {
+      Decompress(result.data, data.size());
+   }
 
    return result;
 }
@@ -60,12 +77,13 @@ int main(int argc, char *argv[])
    std::string file_name, type, output_file;
 
    int c;
-   while ((c = getopt(argc, argv, "f:t:o:d")) != -1) {
+   while ((c = getopt(argc, argv, "f:t:o:dv")) != -1) {
       switch (c) {
       case 'f': file_name = optarg; break;
       case 't': type = optarg; break;
       case 'o': output_file = optarg; break;
-      case 'd': debug = true; break;
+      case 'v': verbose = true; break;
+      case 'd': decompress = true; break;
       default: std::cout << "Got unknown parse returns: " << char(c) << std::endl; return 1;
       }
    }
@@ -98,13 +116,13 @@ int main(int argc, char *argv[])
       return 1;
    }
 
-   std::cout << "compressed (B): " << result.compressed.size() << std::endl;
+   std::cout << "compressed (B)  : " << result.data.size() << std::endl;
 
    if (!output_file.empty()) {
       std::cout << "output file: " << output_file.c_str() << std::endl;
       auto fp = fopen(output_file.c_str(), "w");
-      for (auto i = 0; i < result.compressed.size(); i++) {
-         fprintf(fp, "%c", result.compressed[i]);
+      for (auto i = 0; i < result.data.size(); i++) {
+         fprintf(fp, "%c", result.data[i]);
       }
    }
 
