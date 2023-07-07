@@ -26,9 +26,9 @@ target_link_libraries("${PROJECT_NAME}" PRIVATE nvcomp::nvcomp)
 # ROOT Decompression #
 #################
 
-set(ROOT_DECOMP_SRC_FILES "root_decomp.cu")
-set(ROOT_DECOMP_HEADER_FILES "ROOTBatchData.cuh")
-project(root_decomp  LANGUAGES C CUDA CXX)
+set(ROOT_DECOMP_SRC_FILES "gpu_root_decomp.cu")
+set(ROOT_DECOMP_HEADER_FILES "")
+project(gpu_root_decomp  LANGUAGES C CUDA CXX)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
