@@ -49,7 +49,7 @@ __global__ void PrintBatch(void **chunk_pointers, size_t *chunk_sizes, char *dat
    printf("total_size: %li\n", total_size);
 
    printf("data:\n");
-   for (int i = 0; i < 100; i++) {
+   for (int i = 0; i < 300; i++) {
       printf("%c ", data[i]);
    }
    printf("\n");
@@ -82,27 +82,26 @@ private:
    void *dTempBuf;
    nvcompStatus_t *dStatusPtrs;
 
-   inline std::vector<void *> GetCompressedChunkPtrs(char *data, const size_t *chunk_sizes, const size_t num_chunks)
+   inline std::vector<void *> GetCompressedChunkPtrs()
    {
       std::vector<void *> ptrs(num_chunks);
       size_t offset = HDRSIZE;
 
-      ptrs[0] = static_cast<void *>(data + offset);
-      for (size_t i = 1; i < num_chunks; ++i) {
-         offset += chunk_sizes[i - 1];
-         ptrs[i] = static_cast<void *>(data + offset);
+      for (size_t i = 0; i < num_chunks; ++i) {
+         ptrs[i] = static_cast<void *>(dCompressed + offset);
+         offset += hCompSizes[i];
       }
       return ptrs;
    }
 
-   inline std::vector<void *> GetDecompressedChunkPtrs(char *data, const size_t *chunk_sizes, const size_t num_chunks)
+   inline std::vector<void *> GetDecompressedChunkPtrs()
    {
       std::vector<void *> ptrs(num_chunks);
-      ptrs[0] = static_cast<void *>(data);
+
       size_t offset = 0;
-      for (size_t i = 1; i < num_chunks; ++i) {
-         offset += chunk_sizes[i - 1];
-         ptrs[i] = static_cast<void *>(data + offset);
+      for (size_t i = 0; i < num_chunks; ++i) {
+         ptrs[i] = static_cast<void *>(dDecompressed + offset);
+         offset += hDecompSizes[i];
       }
       return ptrs;
    }
@@ -140,7 +139,14 @@ private:
       } while (remainder > 0);
       R__ASSERT(remainder == 0);
 
+      std::cout << "chunks: " << num_chunks << std::endl;
       hDecompressed.reserve(decompressedTotalSize);
+
+      // Set up buffers for the compressed and decompressed data on the device.
+      ERRCHECK(cudaMallocAsync(&dCompressed, hCompressed.size() * sizeof(char), stream));
+      ERRCHECK(cudaMemcpyAsync(dCompressed, hCompressed.data(), hCompressed.size() * sizeof(char),
+                               cudaMemcpyHostToDevice, stream));
+      ERRCHECK(cudaMallocAsync(&dDecompressed, decompressedTotalSize * sizeof(char), stream));
 
       // Copy compressed and decompressed sizes of each chunk
       ERRCHECK(cudaMallocAsync(&dCompSizes, hCompSizes.size() * sizeof(size_t), stream));
@@ -150,22 +156,20 @@ private:
       ERRCHECK(cudaMemcpyAsync(dDecompSizes, hDecompSizes.data(), hDecompSizes.size() * sizeof(size_t),
                                cudaMemcpyHostToDevice, stream));
 
-      // Set up chunk pointers to compressed data
-      ERRCHECK(cudaMallocAsync(&dCompressed, hCompressed.size() * sizeof(char), stream));
-      ERRCHECK(cudaMemcpyAsync(dCompressed, hCompressed.data(), hCompressed.size(), cudaMemcpyHostToDevice, stream));
-      auto cPtrs = GetCompressedChunkPtrs(dCompressed, hCompSizes.data(), num_chunks);
+      cudaStreamSynchronize(stream);
+
+      // Set up pointers to each chunk in the device buffer for the compressed data.
+      auto cPtrs = GetCompressedChunkPtrs();
       ERRCHECK(cudaMallocAsync(&dCompressedChunkPointers, num_chunks * sizeof(void *), stream));
       ERRCHECK(cudaMemcpyAsync(dCompressedChunkPointers, cPtrs.data(), num_chunks * sizeof(void *),
                                cudaMemcpyHostToDevice, stream));
 
-      // Set up buffer for decompressed result
-      ERRCHECK(cudaMallocAsync(&dDecompressed, decompressedTotalSize * sizeof(char), stream));
-      auto dcPtrs = GetDecompressedChunkPtrs(dDecompressed, hCompSizes.data(), num_chunks);
+      // Set up pointers to each chunk in the device buffer for the decompressed data.
+      auto dcPtrs = GetDecompressedChunkPtrs();
       ERRCHECK(cudaMallocAsync(&dDecompressedChunkPointers, num_chunks * sizeof(void *), stream));
       ERRCHECK(cudaMemcpyAsync(dDecompressedChunkPointers, dcPtrs.data(), num_chunks * sizeof(void *),
                                cudaMemcpyHostToDevice, stream));
 
-      std::cout << "chunks: " << num_chunks << std::endl;
 
       // Allocate temp space
       nvcompStatus_t status = nvcompGetDecompressTempSize(num_chunks, maxUncompressedChunkSize, &tempBufSize);
@@ -214,7 +218,11 @@ private:
    }
 
 public:
-   GPUDecompressor(const std::vector<char> &dDecompressed) : hCompressed(dDecompressed) { cudaStreamCreate(&stream); }
+   GPUDecompressor(const std::vector<char> &data) : hCompressed(data)
+   {
+      num_chunks = 0;
+      cudaStreamCreate(&stream);
+   }
 
    ~GPUDecompressor()
    {
