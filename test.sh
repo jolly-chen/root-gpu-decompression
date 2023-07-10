@@ -5,7 +5,7 @@ Compare() {
     local method=$2
     local output_file=$3
     local expected=$4
-    ./ll_decomp -f ${input_file} -t ${method} -o ${output_file} && diff ${expected} ${output_file}
+    ./gpu_root_decomp -f ${input_file} -t ${method} -o ${output_file} && diff ${expected} ${output_file}
 }
 
 INPUT_FOLDER="input/"

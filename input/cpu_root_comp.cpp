@@ -1,5 +1,5 @@
 ////////////////////////////////////////////
-// Compress files using RNTupleCompressor
+// Compress files using RNTupleCompressor //
 ////////////////////////////////////////////
 
 #include <random>
@@ -13,10 +13,8 @@
 #include "ROOT/RNTupleZip.hxx"
 
 using ROOT::Experimental::Detail::RNTupleCompressor;
-using ROOT::Experimental::Detail::RNTupleDecompressor;
 
 bool verbose = false;
-bool decompress = false;
 
 struct result_t {
    std::vector<char> data;
@@ -24,16 +22,6 @@ struct result_t {
    result_t() {}
    result_t(size_t compressed_size) : data(compressed_size) {}
 };
-
-result_t Decompress(const std::vector<char> &compressed, size_t decomp_size)
-{
-   RNTupleDecompressor decompressor;
-   result_t result(decomp_size);
-
-   decompressor.Unzip(compressed.data(), compressed.size(), decomp_size, result.data.data());
-
-   return result;
-}
 
 result_t Compress(const std::vector<char> &data, int compression_code)
 {
@@ -43,10 +31,6 @@ result_t Compress(const std::vector<char> &data, int compression_code)
    auto size = compressor.Zip(data.data(), data.size(), compression_code, result.data.data());
    result.data.resize(size);
    printf("Returned compression size: %ld\n", size);
-
-   if (decompress) {
-      Decompress(result.data, data.size());
-   }
 
    return result;
 }
@@ -83,13 +67,12 @@ int main(int argc, char *argv[])
       case 't': type = optarg; break;
       case 'o': output_file = optarg; break;
       case 'v': verbose = true; break;
-      case 'd': decompress = true; break;
       default: std::cout << "Got unknown parse returns: " << char(c) << std::endl; return 1;
       }
    }
 
    if (file_name.empty() || type.empty()) {
-      std::cerr << "Must specify a file (-f) and decompression type (-t)" << std::endl;
+      std::cerr << "Must specify a file (-f) and compression type (-t)" << std::endl;
       return 1;
    }
 
@@ -112,7 +95,7 @@ int main(int argc, char *argv[])
       std::cout << "method: zlib" << std::endl;
       result = Compress(data, 101);
    } else {
-      fprintf(stderr, "Unknown decompression type :%s\n", type.c_str());
+      fprintf(stderr, "Unknown compression type :%s\n", type.c_str());
       return 1;
    }
 
