@@ -174,7 +174,6 @@ private:
       } while (remainder > 0);
       R__ASSERT(remainder == 0);
 
-      std::cout << "chunks: " << nChunks << std::endl;
       hDecompressed.resize(decompressedTotalSize);
       cpuConfigureEnd = Clock::now();
 
@@ -228,11 +227,12 @@ private:
       ERRCHECK(cudaEventRecord(memEnd, stream));
       ERRCHECK(cudaEventSynchronize(memEnd));
       ERRCHECK(cudaEventElapsedTime(&setupTime, memStart, memEnd));
-      setupTime += std::chrono::duration_cast<std::chrono::milliseconds>(cpuConfigureEnd - cpuConfigureStart).count();
+      setupTime += std::chrono::duration_cast<std::chrono::nanoseconds>(cpuConfigureEnd - cpuConfigureStart).count() / 1e6;
       ERRCHECK(cudaEventDestroy(memStart));
       ERRCHECK(cudaEventDestroy(memEnd));
 
       if (verbose) {
+         std::cout << "chunks        : " << nChunks << std::endl;
          PrintBatch<<<1, 1, 0, stream>>>(dCompressedChunkPointers, dCompSizes, dCompressed, nChunks);
          ERRCHECK(cudaPeekAtLastError());
          PrintBatch<<<1, 1, 0, stream>>>(dDecompressedChunkPointers, dDecompSizes, dDecompressed, nChunks);
@@ -292,15 +292,12 @@ public:
    bool Decompress(std::string type)
    {
       if (type == "zstd") {
-         std::cout << "method: zstd" << std::endl;
          DecompressInternal(nvcompBatchedZstdGetDecompressSizeAsync, nvcompBatchedZstdDecompressGetTempSizeEx,
                             nvcompBatchedZstdDecompressAsync);
       } else if (type == "lz4") {
-         std::cout << "method: lz4" << std::endl;
          DecompressInternal(nvcompBatchedLZ4GetDecompressSizeAsync, nvcompBatchedLZ4DecompressGetTempSizeEx,
                             nvcompBatchedLZ4DecompressAsync);
       } else if (type == "zlib") {
-         std::cout << "method: zlib" << std::endl;
          DecompressInternal(nvcompBatchedDeflateGetDecompressSizeAsync, nvcompBatchedDeflateDecompressGetTempSizeEx,
                             nvcompBatchedDeflateDecompressAsync);
       } else {
@@ -375,17 +372,18 @@ int main(int argc, char *argv[])
       return 1;
    }
 
-   const std::vector<char> &dDecompressed = readFile(file_name);
-   size_t input_buffer_len = dDecompressed.size();
+   const std::vector<char> &data = readFile(file_name);
+   size_t input_buffer_len = data.size();
 
    std::cout << "--------------------- INPUT INFORMATION ---------------------" << std::endl;
-   std::cout << "file name: " << file_name.c_str() << std::endl;
+   std::cout << "file name     : " << file_name.c_str() << std::endl;
    std::cout << "compressed (B): " << input_buffer_len << std::endl;
+   std::cout << "type          : " << type.c_str() << std::endl;
 
    float setupTime = 0, decompTime = 0;
    Result result;
    for (int i = 0; i < repetitions; i++) {
-      GPUDecompressor decompressor(dDecompressed);
+      GPUDecompressor decompressor(data);
       decompressor.Decompress(type);
       result = decompressor.GetResult();
       setupTime += result.setupTime;
@@ -394,10 +392,9 @@ int main(int argc, char *argv[])
 
    std::cout << "--------------------- OUTPUT INFORMATION ---------------------" << std::endl;
    std::cout << "decompressed (B): " << result.decompressed.size() << std::endl;
-   std::cout << "Avg setup (ms)\tAvg decomp (ms)\tRepetitions" << std::endl;
-   std::cout << setupTime / (float)repetitions << "\t\t\t" << decompTime / (float)repetitions << "\t\t\t" << repetitions
-             << "\n\n"
-             << std::endl;
+   std::cout << "Avg setup (ms)\tAvg decomp (ms)\tRatio\tRepetitions" << std::endl;
+   std::cout << setupTime / (float)repetitions << "\t\t\t" << decompTime / (float)repetitions << "\t\t\t"
+             << (double)result.decompressed.size() / data.size() << "\t\t" << repetitions << std::endl;
 
    if (!output_file.empty()) {
       std::cout << "output file: " << output_file.c_str() << std::endl;
