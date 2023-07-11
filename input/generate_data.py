@@ -7,7 +7,8 @@ def generate(file_name, n, func):
         for i in range(n):
             f.write(chr(func(i)))
 
-    subprocess.run(["./cpu_root_comp", "-f", file_name, "-t", "zstd", "-o", f"{file_name}.root.zst"])
+    for m in ["zstd", "lz4", "zlib"]:
+        subprocess.run(["./cpu_root_comp", "-f", file_name, "-t", m, "-o", f"{file_name}.root.{m}"])
 
 if __name__ == "__main__":
     n = 100000000

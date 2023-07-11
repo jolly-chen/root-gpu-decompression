@@ -33,14 +33,14 @@ inline static void __checkCudaErrors(cudaError_t error, std::string func, std::s
    }
 }
 
-__global__ void PrintBatch(void **chunk_pointers, size_t *chunk_sizes, char *data, size_t num_chunks)
+__global__ void PrintBatch(void **chunk_pointers, size_t *chunk_sizes, char *data, size_t nChunks)
 {
    printf("------------------------- BATCH ----------------------------\n");
-   printf("num_chunks: %li\n", num_chunks);
+   printf("nChunks: %li\n", nChunks);
 
    printf("chunk_sizes:\n");
    size_t total_size = 0;
-   for (int i = 0; i < num_chunks; i++) {
+   for (int i = 0; i < nChunks; i++) {
       printf("%li ", chunk_sizes[i]);
       total_size += chunk_sizes[i];
    }
@@ -49,13 +49,13 @@ __global__ void PrintBatch(void **chunk_pointers, size_t *chunk_sizes, char *dat
    printf("total_size: %li\n", total_size);
 
    printf("data:\n");
-   for (int i = 0; i < 300; i++) {
+   for (int i = 0; i < 100; i++) {
       printf("%c ", data[i]);
    }
    printf("\n");
 
    printf("chunk_pointers:\n");
-   for (int i = 0; i < num_chunks; i++) {
+   for (int i = 0; i < nChunks; i++) {
       printf("\tchunk %d:\n\t\t", i);
       for (int j = 0; j < min(100, (int)chunk_sizes[i]); j++) {
          printf("%c ", ((char *)chunk_pointers[i])[j]);
@@ -65,10 +65,19 @@ __global__ void PrintBatch(void **chunk_pointers, size_t *chunk_sizes, char *dat
    printf("\n");
 }
 
+__global__ void CheckStatuses(nvcompStatus_t *statusPtrs, size_t nChunks)
+{
+   for (int i = 0; i < nChunks; i++) {
+      if (statusPtrs[i] != nvcompSuccess) {
+         printf("Decompression of chunk %d has FAILED with status: %d\n", i, statusPtrs[i]);
+      }
+   }
+}
+
 class GPUDecompressor {
 private:
    cudaStream_t stream;
-   size_t num_chunks;
+   size_t nChunks;
 
    // Host dDecompressed
    std::vector<char> hCompressed, hDecompressed;
@@ -87,10 +96,10 @@ private:
 
    inline std::vector<void *> GetCompressedChunkPtrs()
    {
-      std::vector<void *> ptrs(num_chunks);
+      std::vector<void *> ptrs(nChunks);
       size_t offset = HDRSIZE;
 
-      for (size_t i = 0; i < num_chunks; ++i) {
+      for (size_t i = 0; i < nChunks; ++i) {
          ptrs[i] = static_cast<void *>(dCompressed + offset);
          offset += hCompSizes[i];
       }
@@ -99,10 +108,10 @@ private:
 
    inline std::vector<void *> GetDecompressedChunkPtrs()
    {
-      std::vector<void *> ptrs(num_chunks);
+      std::vector<void *> ptrs(nChunks);
 
       size_t offset = 0;
-      for (size_t i = 0; i < num_chunks; ++i) {
+      for (size_t i = 0; i < nChunks; ++i) {
          ptrs[i] = static_cast<void *>(dDecompressed + offset);
          offset += hDecompSizes[i];
       }
@@ -128,7 +137,7 @@ private:
          R__ASSERT(szTarget > szSource);
          R__ASSERT(static_cast<unsigned int>(szSource) <= hCompressed.size());
 
-         num_chunks++;
+         nChunks++;
          hCompSizes.push_back(szSource);
          hDecompSizes.push_back(szTarget);
 
@@ -142,7 +151,7 @@ private:
       } while (remainder > 0);
       R__ASSERT(remainder == 0);
 
-      std::cout << "chunks: " << num_chunks << std::endl;
+      std::cout << "chunks: " << nChunks << std::endl;
       hDecompressed.resize(decompressedTotalSize);
 
       // Set up buffers for the compressed and decompressed data on the device.
@@ -151,7 +160,22 @@ private:
                                cudaMemcpyHostToDevice, stream));
       ERRCHECK(cudaMallocAsync(&dDecompressed, decompressedTotalSize * sizeof(char), stream));
 
+      cudaStreamSynchronize(stream);
+
+      // Set up pointers to each chunk in the device buffer for the compressed data.
+      auto cPtrs = GetCompressedChunkPtrs();
+      ERRCHECK(cudaMallocAsync(&dCompressedChunkPointers, nChunks * sizeof(void *), stream));
+      ERRCHECK(cudaMemcpyAsync(dCompressedChunkPointers, cPtrs.data(), nChunks * sizeof(void *), cudaMemcpyHostToDevice,
+                               stream));
+
+      // Set up pointers to each chunk in the device buffer for the decompressed data.
+      auto dcPtrs = GetDecompressedChunkPtrs();
+      ERRCHECK(cudaMallocAsync(&dDecompressedChunkPointers, nChunks * sizeof(void *), stream));
+      ERRCHECK(cudaMemcpyAsync(dDecompressedChunkPointers, dcPtrs.data(), nChunks * sizeof(void *),
+                               cudaMemcpyHostToDevice, stream));
+
       // Copy compressed and decompressed sizes of each chunk
+      std::transform(hCompSizes.begin(), hCompSizes.end(), hCompSizes.begin(), [&](auto x) { return x - HDRSIZE; });
       ERRCHECK(cudaMallocAsync(&dCompSizes, hCompSizes.size() * sizeof(size_t), stream));
       ERRCHECK(cudaMemcpyAsync(dCompSizes, hCompSizes.data(), hCompSizes.size() * sizeof(size_t),
                                cudaMemcpyHostToDevice, stream));
@@ -159,37 +183,24 @@ private:
       ERRCHECK(cudaMemcpyAsync(dDecompSizes, hDecompSizes.data(), hDecompSizes.size() * sizeof(size_t),
                                cudaMemcpyHostToDevice, stream));
 
-      cudaStreamSynchronize(stream);
-
-      // Set up pointers to each chunk in the device buffer for the compressed data.
-      auto cPtrs = GetCompressedChunkPtrs();
-      ERRCHECK(cudaMallocAsync(&dCompressedChunkPointers, num_chunks * sizeof(void *), stream));
-      ERRCHECK(cudaMemcpyAsync(dCompressedChunkPointers, cPtrs.data(), num_chunks * sizeof(void *),
-                               cudaMemcpyHostToDevice, stream));
-
-      // Set up pointers to each chunk in the device buffer for the decompressed data.
-      auto dcPtrs = GetDecompressedChunkPtrs();
-      ERRCHECK(cudaMallocAsync(&dDecompressedChunkPointers, num_chunks * sizeof(void *), stream));
-      ERRCHECK(cudaMemcpyAsync(dDecompressedChunkPointers, dcPtrs.data(), num_chunks * sizeof(void *),
-                               cudaMemcpyHostToDevice, stream));
-
       // Allocate temp space
-      nvcompStatus_t status = nvcompGetDecompressTempSize(num_chunks, maxUncompressedChunkSize, &tempBufSize);
+      nvcompStatus_t status =
+         nvcompGetDecompressTempSize(nChunks, maxUncompressedChunkSize, &tempBufSize, decompressedTotalSize);
       if (status != nvcompSuccess) {
          throw std::runtime_error("nvcompBatched*DecompressGetTempSize() failed.");
       }
       ERRCHECK(cudaMallocAsync(&dTempBuf, tempBufSize, stream));
 
       // Status pointers
-      ERRCHECK(cudaMallocAsync(&dStatusPtrs, num_chunks * sizeof(nvcompStatus_t), stream));
+      ERRCHECK(cudaMallocAsync(&dStatusPtrs, nChunks * sizeof(nvcompStatus_t), stream));
 
       // For measuring runtime
       cudaEventCreate(&start);
       cudaEventCreate(&end);
 
       if (verbose) {
-         PrintBatch<<<1, 1, 0, stream>>>(dCompressedChunkPointers, dCompSizes, dCompressed, num_chunks);
-         PrintBatch<<<1, 1, 0, stream>>>(dDecompressedChunkPointers, dDecompSizes, dDecompressed, num_chunks);
+         PrintBatch<<<1, 1, 0, stream>>>(dCompressedChunkPointers, dCompSizes, dCompressed, nChunks);
+         PrintBatch<<<1, 1, 0, stream>>>(dDecompressedChunkPointers, dDecompSizes, dDecompressed, nChunks);
       }
    }
 
@@ -199,23 +210,27 @@ private:
    {
       Configure(nvcompGetDecompressSize, nvcompGetDecompressTempSize);
 
+      size_t *actualSizes;
+      ERRCHECK(cudaMallocAsync(&actualSizes, nChunks * sizeof(size_t), stream));
+
       // Run decompression
       nvcompStatus_t status =
-         nvcompDecompress(dCompressedChunkPointers, dCompSizes, dDecompSizes, dDecompSizes, num_chunks, dTempBuf,
+         nvcompDecompress(dCompressedChunkPointers, dCompSizes, dDecompSizes, dDecompSizes, nChunks, dTempBuf,
                           tempBufSize, dDecompressedChunkPointers, dStatusPtrs, stream);
       if (status != nvcompSuccess) {
          throw std::runtime_error("ERROR: nvcompBatched*DecompressAsync() not successful");
       }
 
       if (verbose) {
-         PrintBatch<<<1, 1, 0, stream>>>(dDecompressedChunkPointers, dDecompSizes, dDecompressed, num_chunks);
+         CheckStatuses<<<1, 1, 0, stream>>>(dStatusPtrs, nChunks);
+         PrintBatch<<<1, 1, 0, stream>>>(dDecompressedChunkPointers, dDecompSizes, dDecompressed, nChunks);
       }
    }
 
 public:
    GPUDecompressor(const std::vector<char> &data) : hCompressed(data)
    {
-      num_chunks = 0;
+      nChunks = 0;
       cudaStreamCreate(&stream);
    }
 
@@ -239,15 +254,15 @@ public:
    {
       if (type == "zstd") {
          std::cout << "method: zstd" << std::endl;
-         DecompressInternal(nvcompBatchedZstdGetDecompressSizeAsync, nvcompBatchedZstdDecompressGetTempSize,
+         DecompressInternal(nvcompBatchedZstdGetDecompressSizeAsync, nvcompBatchedZstdDecompressGetTempSizeEx,
                             nvcompBatchedZstdDecompressAsync);
       } else if (type == "lz4") {
          std::cout << "method: lz4" << std::endl;
-         DecompressInternal(nvcompBatchedLZ4GetDecompressSizeAsync, nvcompBatchedLZ4DecompressGetTempSize,
+         DecompressInternal(nvcompBatchedLZ4GetDecompressSizeAsync, nvcompBatchedLZ4DecompressGetTempSizeEx,
                             nvcompBatchedLZ4DecompressAsync);
       } else if (type == "zlib") {
          std::cout << "method: zlib" << std::endl;
-         DecompressInternal(nvcompBatchedDeflateGetDecompressSizeAsync, nvcompBatchedDeflateDecompressGetTempSize,
+         DecompressInternal(nvcompBatchedDeflateGetDecompressSizeAsync, nvcompBatchedDeflateDecompressGetTempSizeEx,
                             nvcompBatchedDeflateDecompressAsync);
       } else {
          fprintf(stderr, "Unknown decompression type\n");
@@ -259,10 +274,14 @@ public:
 
    std::vector<char> &GetResult()
    {
+
       // Retrieve resuts
       ERRCHECK(cudaMemcpyAsync(hDecompressed.data(), dDecompressed, hDecompressed.size() * sizeof(char),
                                cudaMemcpyDeviceToHost, stream));
       cudaStreamSynchronize(stream);
+
+      std::cout << "--------------------- OUTPUT INFORMATION ---------------------" << std::endl;
+      std::cout << "decompressed (B): " << hDecompressed.size() << std::endl;
       return hDecompressed;
    }
 };
