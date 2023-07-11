@@ -9,12 +9,15 @@
 #include <vector>
 #include <unistd.h>
 #include <string>
+#include <chrono>
 
 #include "RZip.h"
 #include "TError.h"
 #include "nvcomp/zstd.h"
 #include "nvcomp/lz4.h"
 #include "nvcomp/deflate.h"
+
+using Clock = std::chrono::high_resolution_clock;
 
 bool verbose = false;
 
@@ -74,6 +77,11 @@ __global__ void CheckStatuses(nvcompStatus_t *statusPtrs, size_t nChunks)
    }
 }
 
+struct Result {
+   float setupTime, decompTime;
+   std::vector<char> decompressed;
+};
+
 class GPUDecompressor {
 private:
    cudaStream_t stream;
@@ -92,7 +100,9 @@ private:
    nvcompStatus_t *dStatusPtrs;
 
    // CUDA events to measure decompression time
-   cudaEvent_t start, end;
+   cudaEvent_t decompStart, decompEnd;
+
+   float setupTime, decompTime;
 
    inline std::vector<void *> GetCompressedChunkPtrs()
    {
@@ -122,6 +132,19 @@ private:
    template <typename GetDecompressSizeFunc, typename GetTempSizeFunc>
    void Configure(GetDecompressSizeFunc nvcompGetDecompressSize, GetTempSizeFunc nvcompGetDecompressTempSize)
    {
+      // For measuring decompression runtime
+      ERRCHECK(cudaEventCreate(&decompStart));
+      ERRCHECK(cudaEventCreate(&decompEnd));
+
+      // For measuring memory allocation and transfer times on the GPU
+      cudaEvent_t memStart, memEnd;
+      ERRCHECK(cudaEventCreate(&memStart));
+      ERRCHECK(cudaEventCreate(&memEnd));
+
+      // For measuring setup time on the CPU
+      auto cpuConfigureStart = Clock::now();
+      auto cpuConfigureEnd = Clock::now();
+
       size_t remainder = hCompressed.size();
       unsigned char *source = const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(hCompressed.data()));
 
@@ -153,29 +176,37 @@ private:
 
       std::cout << "chunks: " << nChunks << std::endl;
       hDecompressed.resize(decompressedTotalSize);
+      cpuConfigureEnd = Clock::now();
 
       // Set up buffers for the compressed and decompressed data on the device.
+      cudaEventRecord(memStart, stream);
       ERRCHECK(cudaMallocAsync(&dCompressed, hCompressed.size() * sizeof(char), stream));
       ERRCHECK(cudaMemcpyAsync(dCompressed, hCompressed.data(), hCompressed.size() * sizeof(char),
                                cudaMemcpyHostToDevice, stream));
       ERRCHECK(cudaMallocAsync(&dDecompressed, decompressedTotalSize * sizeof(char), stream));
 
-      cudaStreamSynchronize(stream);
+      ERRCHECK(cudaStreamSynchronize(stream));
 
       // Set up pointers to each chunk in the device buffer for the compressed data.
+      cpuConfigureStart = Clock::now();
       auto cPtrs = GetCompressedChunkPtrs();
+      cpuConfigureEnd = Clock::now();
       ERRCHECK(cudaMallocAsync(&dCompressedChunkPointers, nChunks * sizeof(void *), stream));
       ERRCHECK(cudaMemcpyAsync(dCompressedChunkPointers, cPtrs.data(), nChunks * sizeof(void *), cudaMemcpyHostToDevice,
                                stream));
 
       // Set up pointers to each chunk in the device buffer for the decompressed data.
+      cpuConfigureStart = Clock::now();
       auto dcPtrs = GetDecompressedChunkPtrs();
+      cpuConfigureEnd = Clock::now();
       ERRCHECK(cudaMallocAsync(&dDecompressedChunkPointers, nChunks * sizeof(void *), stream));
       ERRCHECK(cudaMemcpyAsync(dDecompressedChunkPointers, dcPtrs.data(), nChunks * sizeof(void *),
                                cudaMemcpyHostToDevice, stream));
 
       // Copy compressed and decompressed sizes of each chunk
+      cpuConfigureStart = Clock::now();
       std::transform(hCompSizes.begin(), hCompSizes.end(), hCompSizes.begin(), [&](auto x) { return x - HDRSIZE; });
+      cpuConfigureEnd = Clock::now();
       ERRCHECK(cudaMallocAsync(&dCompSizes, hCompSizes.size() * sizeof(size_t), stream));
       ERRCHECK(cudaMemcpyAsync(dCompSizes, hCompSizes.data(), hCompSizes.size() * sizeof(size_t),
                                cudaMemcpyHostToDevice, stream));
@@ -194,13 +225,18 @@ private:
       // Status pointers
       ERRCHECK(cudaMallocAsync(&dStatusPtrs, nChunks * sizeof(nvcompStatus_t), stream));
 
-      // For measuring runtime
-      cudaEventCreate(&start);
-      cudaEventCreate(&end);
+      ERRCHECK(cudaEventRecord(memEnd, stream));
+      ERRCHECK(cudaEventSynchronize(memEnd));
+      ERRCHECK(cudaEventElapsedTime(&setupTime, memStart, memEnd));
+      setupTime += std::chrono::duration_cast<std::chrono::milliseconds>(cpuConfigureEnd - cpuConfigureStart).count();
+      ERRCHECK(cudaEventDestroy(memStart));
+      ERRCHECK(cudaEventDestroy(memEnd));
 
       if (verbose) {
          PrintBatch<<<1, 1, 0, stream>>>(dCompressedChunkPointers, dCompSizes, dCompressed, nChunks);
+         ERRCHECK(cudaPeekAtLastError());
          PrintBatch<<<1, 1, 0, stream>>>(dDecompressedChunkPointers, dDecompSizes, dDecompressed, nChunks);
+         ERRCHECK(cudaPeekAtLastError());
       }
    }
 
@@ -210,20 +246,23 @@ private:
    {
       Configure(nvcompGetDecompressSize, nvcompGetDecompressTempSize);
 
-      size_t *actualSizes;
-      ERRCHECK(cudaMallocAsync(&actualSizes, nChunks * sizeof(size_t), stream));
-
       // Run decompression
+      ERRCHECK(cudaEventRecord(decompStart, stream));
       nvcompStatus_t status =
          nvcompDecompress(dCompressedChunkPointers, dCompSizes, dDecompSizes, dDecompSizes, nChunks, dTempBuf,
                           tempBufSize, dDecompressedChunkPointers, dStatusPtrs, stream);
       if (status != nvcompSuccess) {
          throw std::runtime_error("ERROR: nvcompBatched*DecompressAsync() not successful");
       }
+      ERRCHECK(cudaEventRecord(decompEnd, stream));
+      ERRCHECK(cudaEventSynchronize(decompEnd));
+      ERRCHECK(cudaEventElapsedTime(&decompTime, decompStart, decompEnd));
 
       if (verbose) {
          CheckStatuses<<<1, 1, 0, stream>>>(dStatusPtrs, nChunks);
+         ERRCHECK(cudaPeekAtLastError());
          PrintBatch<<<1, 1, 0, stream>>>(dDecompressedChunkPointers, dDecompSizes, dDecompressed, nChunks);
+         ERRCHECK(cudaPeekAtLastError());
       }
    }
 
@@ -231,23 +270,23 @@ public:
    GPUDecompressor(const std::vector<char> &data) : hCompressed(data)
    {
       nChunks = 0;
-      cudaStreamCreate(&stream);
+      ERRCHECK(cudaStreamCreate(&stream));
    }
 
    ~GPUDecompressor()
    {
-      cudaFree(dDecompressed);
-      cudaFree(dCompressed);
-      cudaFree(dCompressedChunkPointers);
-      cudaFree(dDecompressedChunkPointers);
-      cudaFree(dCompSizes);
-      cudaFree(dDecompSizes);
-      cudaFree(dTempBuf);
-      cudaFree(dStatusPtrs);
+      ERRCHECK(cudaFree(dDecompressed));
+      ERRCHECK(cudaFree(dCompressed));
+      ERRCHECK(cudaFree(dCompressedChunkPointers));
+      ERRCHECK(cudaFree(dDecompressedChunkPointers));
+      ERRCHECK(cudaFree(dCompSizes));
+      ERRCHECK(cudaFree(dDecompSizes));
+      ERRCHECK(cudaFree(dTempBuf));
+      ERRCHECK(cudaFree(dStatusPtrs));
 
-      cudaEventDestroy(start);
-      cudaEventDestroy(end);
-      cudaStreamDestroy(stream);
+      ERRCHECK(cudaEventDestroy(decompStart));
+      ERRCHECK(cudaEventDestroy(decompEnd));
+      ERRCHECK(cudaStreamDestroy(stream));
    }
 
    bool Decompress(std::string type)
@@ -272,17 +311,20 @@ public:
       return true;
    }
 
-   std::vector<char> &GetResult()
+   Result GetResult()
    {
+      Result result;
 
       // Retrieve resuts
       ERRCHECK(cudaMemcpyAsync(hDecompressed.data(), dDecompressed, hDecompressed.size() * sizeof(char),
                                cudaMemcpyDeviceToHost, stream));
-      cudaStreamSynchronize(stream);
+      ERRCHECK(cudaStreamSynchronize(stream));
 
-      std::cout << "--------------------- OUTPUT INFORMATION ---------------------" << std::endl;
-      std::cout << "decompressed (B): " << hDecompressed.size() << std::endl;
-      return hDecompressed;
+      result.decompTime = decompTime;
+      result.setupTime = setupTime;
+      result.decompressed = hDecompressed;
+
+      return result;
    }
 };
 
@@ -314,14 +356,16 @@ std::vector<char> readFile(const std::string &filename)
 int main(int argc, char *argv[])
 {
    std::string file_name, type, output_file;
+   int repetitions = 1;
 
    int c;
-   while ((c = getopt(argc, argv, "f:t:o:v")) != -1) {
+   while ((c = getopt(argc, argv, "f:t:o:vn:")) != -1) {
       switch (c) {
       case 'f': file_name = optarg; break;
       case 't': type = optarg; break;
       case 'o': output_file = optarg; break;
       case 'v': verbose = true; break;
+      case 'n': repetitions = atoi(optarg); break;
       default: std::cout << "Got unknown parse returns: " << char(c) << std::endl; return 1;
       }
    }
@@ -338,15 +382,28 @@ int main(int argc, char *argv[])
    std::cout << "file name: " << file_name.c_str() << std::endl;
    std::cout << "compressed (B): " << input_buffer_len << std::endl;
 
-   GPUDecompressor decompressor(dDecompressed);
-   decompressor.Decompress(type);
-   auto &result = decompressor.GetResult();
+   float setupTime = 0, decompTime = 0;
+   Result result;
+   for (int i = 0; i < repetitions; i++) {
+      GPUDecompressor decompressor(dDecompressed);
+      decompressor.Decompress(type);
+      result = decompressor.GetResult();
+      setupTime += result.setupTime;
+      decompTime += result.decompTime;
+   }
+
+   std::cout << "--------------------- OUTPUT INFORMATION ---------------------" << std::endl;
+   std::cout << "decompressed (B): " << result.decompressed.size() << std::endl;
+   std::cout << "Avg setup (ms)\tAvg decomp (ms)\tRepetitions" << std::endl;
+   std::cout << setupTime / (float)repetitions << "\t\t\t" << decompTime / (float)repetitions << "\t\t\t" << repetitions
+             << "\n\n"
+             << std::endl;
 
    if (!output_file.empty()) {
       std::cout << "output file: " << output_file.c_str() << std::endl;
       auto fp = fopen(output_file.c_str(), "w");
-      for (auto i = 0; i < result.size(); i++) {
-         fprintf(fp, "%c", result[i]);
+      for (auto i = 0; i < result.decompressed.size(); i++) {
+         fprintf(fp, "%c", result.decompressed[i]);
       }
    }
 
