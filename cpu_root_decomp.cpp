@@ -117,6 +117,7 @@ int main(int argc, char *argv[])
    std::cout << "decompressed (B): " << result.data.size() << std::endl;
    std::cout << "avg time (ms)   : " << GetMean(decompTimes) << std::endl;
    std::cout << "std deviation   : " << GetStdDev(decompTimes) << std::endl;
+   std::cout << "ratio           : " << data.size() / (double) decompSize << std::endl;
 
    if (!output_file.empty()) {
       std::cout << "output file     : " << output_file.c_str() << std::endl;

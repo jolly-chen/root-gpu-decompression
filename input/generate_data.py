@@ -15,4 +15,4 @@ if __name__ == "__main__":
     s = 50000000
     for n in np.logspace(1, k, base=10, num=k).astype(int):
         # generate(f"uniform_random_50m.{n}", np.around(np.random.uniform(0, k, s)).astype(np.uint8))
-        generate(f"gauss_random_50m.{n}", np.around(np.minimum(255, np.maximum(1, np.random.normal(128, n, size=s)))).astype(np.uint8))
+        generate(f"gauss_random.{s}.{n}", np.around(np.minimum(255, np.maximum(1, np.random.normal(128, n, size=s)))).astype(np.uint8))

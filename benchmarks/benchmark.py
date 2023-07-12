@@ -42,8 +42,40 @@ def run_benchmark_gpu(n, files):
     return setup_times, dev_st, decomp_times, dev_dt, ratios
 
 
+def run_benchmark_cpu(n, files):
+    n_pts = len(files)
+    decomp_times = np.zeros(n_pts)
+    dev_dt = np.zeros(n_pts)
+    ratios = np.zeros(n_pts)
 
-def plot_bar(c, setup_times, dev_st, decomp_times, dev_dt, ratios):
+    for i, f in enumerate(files):
+        result = subprocess.run(
+            [
+                "../cpu_root_decomp",
+                "-f",
+                f,
+                "-s",
+                f.split(".")[-4],
+                "-n",
+                str(n),
+            ],
+            stdout=subprocess.PIPE,
+        )
+        output = result.stdout.decode("utf-8").split()
+        decomp_times[i] = float(output[-8])
+        dev_dt[i] = float(output[-4])
+        ratios[i] = float(output[-1])
+
+    # Sort the result by compression ratio
+    sort_idx = np.argsort(ratios)
+    decomp_times = decomp_times[sort_idx]
+    dev_dt = dev_dt[sort_idx]
+    print(decomp_times, dev_dt)
+    return decomp_times, dev_dt
+
+
+def plot_bar(c, gpu_results):
+    setup_times, dev_st, decomp_times, dev_dt, ratios = gpu_results
     # Visualize results in bar chart
     n_pts = len(ratios)
 
@@ -72,32 +104,41 @@ def plot_bar(c, setup_times, dev_st, decomp_times, dev_dt, ratios):
     l.SetTextSize(0.03)
     l.DrawClone()
 
-def plot_line(c, setup_times, dev_st, decomp_times, dev_dt, ratios):
+
+def plot_line(c, cpu_results, gpu_results):
+    cpu_decomp_times, cpu_dev_dt = cpu_results
+    gpu_setup_times, gpu_dev_st, gpu_decomp_times, gpu_dev_dt, ratios = gpu_results
+
     n_pts = len(ratios)
     zeroes = np.zeros(n_pts, dtype=float)
 
     mg = ROOT.TMultiGraph()
-    g1 = ROOT.TGraphErrors(n_pts, ratios, setup_times, zeroes, dev_st)
+    g1 = ROOT.TGraphErrors(n_pts, ratios, gpu_setup_times, zeroes, gpu_dev_st)
     g1.SetLineColor(ROOT.kRed)
 
-    g2 = ROOT.TGraphErrors(n_pts, ratios, decomp_times, zeroes, dev_dt)
+    g2 = ROOT.TGraphErrors(n_pts, ratios, gpu_decomp_times, zeroes, gpu_dev_dt)
     g2.SetLineColor(ROOT.kBlue)
+
+    g3 = ROOT.TGraphErrors(n_pts, ratios, cpu_decomp_times, zeroes, cpu_dev_dt)
+    # g3.SetLineColor(ROOT.kRed)
+
     c.SetRightMargin(0.32)
     mg.Add(g1)
     mg.Add(g2)
+    mg.Add(g3)
 
     mg.GetXaxis().SetTitle("Compression ratio")
     mg.GetXaxis().SetLimits(0, 6)
     mg.GetYaxis().SetTitle("Time (ms)")
-    mg.GetYaxis().SetLimits(0, np.max(decomp_times) + 10)
+    mg.GetYaxis().SetLimits(0, np.max(gpu_decomp_times) + 10)
     mg.DrawClone("AL")
 
     l = ROOT.TLegend(0.687, 0.7, 0.99, 0.9)
-    l.AddEntry(g1, "Setup")
-    l.AddEntry(g2, "Decompression")
+    l.AddEntry(g1, "GPU - Setup")
+    l.AddEntry(g2, "GPU - Decompression")
+    l.AddEntry(g3, "CPU - Decompression")
     l.SetTextSize(0.03)
     l.DrawClone()
-
 
 
 if __name__ == "__main__":
@@ -106,5 +147,6 @@ if __name__ == "__main__":
     files = glob.glob("*.root.zstd")
 
     c = ROOT.TCanvas("c1", "Decompression of ROOT compressed files")
-    results = run_benchmark_gpu(n, files)
-    plot_line(c, *results)
+    gpu_results = run_benchmark_gpu(n, files)
+    cpu_results = run_benchmark_cpu(n, files)
+    plot_line(c, cpu_results, gpu_results)
