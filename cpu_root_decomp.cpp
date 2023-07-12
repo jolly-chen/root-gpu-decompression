@@ -41,6 +41,20 @@ result_t Decompress(const std::vector<char> &data, size_t decompSize)
    return result;
 }
 
+float GetMean(const std::vector<float> &vec)
+{
+   return std::accumulate(vec.begin(), vec.end(), 0.0) / vec.size();
+}
+
+float GetStdDev(const std::vector<float> &vec)
+{
+   auto mean = GetMean(vec);
+   std::vector<double> diff(vec.size());
+   std::transform(vec.begin(), vec.end(), diff.begin(), [mean](double x) { return x - mean; });
+   double sq_sum = std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0);
+   return std::sqrt(sq_sum / vec.size());
+}
+
 /**
  * File reading
  */
@@ -94,14 +108,15 @@ int main(int argc, char *argv[])
    std::cout << "repetitions     : " << repetitions << std::endl;
 
    result_t result;
-   float decompTime;
+   std::vector<float> decompTimes;
    for (int i = 0; i < repetitions; i++) {
       result = Decompress(data, decompSize);
-      decompTime += result.decompTime;
+      decompTimes.push_back(result.decompTime);
    }
 
    std::cout << "decompressed (B): " << result.data.size() << std::endl;
-   std::cout << "time (ms)       : " << decompTime / (float)repetitions << std::endl;
+   std::cout << "avg time (ms)   : " << GetMean(decompTimes) << std::endl;
+   std::cout << "std deviation   : " << GetStdDev(decompTimes) << std::endl;
 
    if (!output_file.empty()) {
       std::cout << "output file     : " << output_file.c_str() << std::endl;

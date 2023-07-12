@@ -227,7 +227,8 @@ private:
       ERRCHECK(cudaEventRecord(memEnd, stream));
       ERRCHECK(cudaEventSynchronize(memEnd));
       ERRCHECK(cudaEventElapsedTime(&setupTime, memStart, memEnd));
-      setupTime += std::chrono::duration_cast<std::chrono::nanoseconds>(cpuConfigureEnd - cpuConfigureStart).count() / 1e6;
+      setupTime +=
+         std::chrono::duration_cast<std::chrono::nanoseconds>(cpuConfigureEnd - cpuConfigureStart).count() / 1e6;
       ERRCHECK(cudaEventDestroy(memStart));
       ERRCHECK(cudaEventDestroy(memEnd));
 
@@ -325,6 +326,20 @@ public:
    }
 };
 
+float GetMean(const std::vector<float> &vec)
+{
+   return std::accumulate(vec.begin(), vec.end(), 0.0) / vec.size();
+}
+
+float GetStdDev(const std::vector<float> &vec)
+{
+   auto mean = GetMean(vec);
+   std::vector<double> diff(vec.size());
+   std::transform(vec.begin(), vec.end(), diff.begin(), [mean](double x) { return x - mean; });
+   double sq_sum = std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0);
+   return std::sqrt(sq_sum / vec.size());
+}
+
 /**
  * File reading
  */
@@ -380,21 +395,21 @@ int main(int argc, char *argv[])
    std::cout << "compressed (B): " << input_buffer_len << std::endl;
    std::cout << "type          : " << type.c_str() << std::endl;
 
-   float setupTime = 0, decompTime = 0;
+   std::vector<float> setupTimes, decompTimes;
    Result result;
    for (int i = 0; i < repetitions; i++) {
       GPUDecompressor decompressor(data);
       decompressor.Decompress(type);
       result = decompressor.GetResult();
-      setupTime += result.setupTime;
-      decompTime += result.decompTime;
+      setupTimes.push_back(result.setupTime);
+      decompTimes.push_back(result.decompTime);
    }
 
    std::cout << "--------------------- OUTPUT INFORMATION ---------------------" << std::endl;
    std::cout << "decompressed (B): " << result.decompressed.size() << std::endl;
-   std::cout << "Avg setup (ms)\tAvg decomp (ms)\tRatio\tRepetitions" << std::endl;
-   std::cout << setupTime / (float)repetitions << "\t\t\t" << decompTime / (float)repetitions << "\t\t\t"
-             << (double)result.decompressed.size() / data.size() << "\t\t" << repetitions << std::endl;
+   std::cout << "Avg setup (ms)\tStdDev\t\tAvg decomp (ms)\t\tStdDev\t\tRatio\t\tRepetitions" << std::endl;
+   std::cout << GetMean(setupTimes) << "\t\t" << GetStdDev(setupTimes) << "\t\t" << GetMean(decompTimes) << "\t\t\t"
+             << GetStdDev(decompTimes) << "\t\t" << result.decompressed.size() / (double) data.size() << "\t\t" << repetitions << std::endl;
 
    if (!output_file.empty()) {
       std::cout << "output file: " << output_file.c_str() << std::endl;

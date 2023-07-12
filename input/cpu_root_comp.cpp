@@ -30,7 +30,6 @@ result_t Compress(const std::vector<char> &data, int compression_code)
 
    auto size = compressor.Zip(data.data(), data.size(), compression_code, result.data.data());
    result.data.resize(size);
-   printf("Returned compression size: %ld\n", size);
 
    return result;
 }
@@ -100,6 +99,7 @@ int main(int argc, char *argv[])
    }
 
    std::cout << "compressed (B)  : " << result.data.size() << std::endl;
+   std::cout << "ratio           : " << data.size() / (double) result.data.size() << std::endl;
 
    if (!output_file.empty()) {
       std::cout << "output file: " << output_file.c_str() << std::endl;
