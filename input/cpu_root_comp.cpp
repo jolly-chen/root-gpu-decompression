@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <string>
 
+#include "utils.h"
 #include "ROOT/RNTupleZip.hxx"
 
 using ROOT::Experimental::Detail::RNTupleCompressor;
@@ -32,27 +33,6 @@ result_t Compress(const std::vector<char> &data, int compression_code)
    result.data.resize(size);
 
    return result;
-}
-
-/**
- * File reading
- */
-
-std::vector<char> readFile(const std::string &filename)
-{
-   std::vector<char> buffer(4096);
-   std::vector<char> host_data;
-
-   std::ifstream fin(filename, std::ifstream::binary);
-   fin.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-
-   size_t num;
-   do {
-      num = fin.readsome(buffer.data(), buffer.size());
-      host_data.insert(host_data.end(), buffer.begin(), buffer.begin() + num);
-   } while (num > 0);
-
-   return host_data;
 }
 
 int main(int argc, char *argv[])
