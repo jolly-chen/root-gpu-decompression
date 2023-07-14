@@ -1,5 +1,5 @@
 ////////////////////////////////////////////
-// Compress files using RNTupleDeompressor //
+// Compress files using RNTupleDecompressor //
 ////////////////////////////////////////////
 
 #include <random>
@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <string>
 #include <chrono>
+#include <thread>
+#include <atomic>
 
 #include "utils.h"
 #include "ROOT/RNTupleZip.hxx"
@@ -24,70 +26,88 @@ struct result_t {
    float decompTime;
 
    result_t() {}
-   result_t(size_t compressed_size) : data(compressed_size) {}
+   result_t(size_t decompSize) : data(decompSize) {}
 };
 
-result_t Decompress(const std::vector<char> &data, size_t decompSize)
+void Decompress(const int tid, const int nThreads, const std::vector<std::vector<char>> &data, result_t *result,
+               const int decompSize, std::atomic<bool> &startRunning)
 {
-   RNTupleDecompressor decompressor;
-   result_t result(decompSize);
+   while (!startRunning) {
+   }
 
-   auto start = Clock::now();
-   auto end = Clock::now();
-   decompressor.Unzip(data.data(), data.size(), decompSize, result.data.data());
-   end = Clock::now();
-
-   result.decompTime = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() / 1e6;
-
-   return result;
+   // Distribute files round-robin
+   for (int i = tid; i < data.size(); i += nThreads) {
+      RNTupleDecompressor decompressor;
+      decompressor.Unzip(data[i].data(), data[i].size(), decompSize, &result->data[i * decompSize]);
+   }
 }
 
 int main(int argc, char *argv[])
 {
-   std::string file_name, type, output_file;
+   std::string fileName, type, outputFile;
    int decompSize = -1;
    int repetitions = 1;
+   int multiFileSize = 1;
+   int nThreads = std::max(1U, std::thread::hardware_concurrency());
 
    int c;
-   while ((c = getopt(argc, argv, "f:o:dvs:n:")) != -1) {
+   while ((c = getopt(argc, argv, "f:o:dvs:n:m:c:")) != -1) {
       switch (c) {
-      case 'f': file_name = optarg; break;
-      case 'o': output_file = optarg; break;
+      case 'f': fileName = optarg; break;
+      case 'o': outputFile = optarg; break;
       case 'v': verbose = true; break;
       case 's': decompSize = atoi(optarg); break;
+      case 'm': multiFileSize = atoi(optarg); break;
       case 'n': repetitions = atoi(optarg); break;
-      default: std::cout << "Got unknown parse returns: " << char(c) << std::endl; return 1;
+      case 'c': nThreads = atoi(optarg); break;
+      default: std::cout << "Ignoring unknown parse returns: " << char(c) << std::endl;
       }
    }
 
-   if (file_name.empty() || decompSize < 0) {
-      std::cerr << "Must specify a file (-f), deompression type (-t), and size of decompressed data (-s)" << std::endl;
+   if (fileName.empty() || decompSize < 0) {
+      std::cerr << "Must specify a file (-f) and size of decompressed data (-s)" << std::endl;
       return 1;
    }
 
-   const std::vector<char> &data = readFile(file_name);
-   size_t input_buffer_len = data.size();
-
-   std::cout << "--------------------- INPUT INFORMATION ---------------------" << std::endl;
-   std::cout << "file name       : " << file_name.c_str() << std::endl;
-   std::cout << "compressed (B)  : " << input_buffer_len << std::endl;
-   std::cout << "repetitions     : " << repetitions << std::endl;
-
-   result_t result;
-   std::vector<float> decompTimes;
-   for (int i = 0; i < repetitions; i++) {
-      result = Decompress(data, decompSize);
-      decompTimes.push_back(result.decompTime);
+   auto files = GenerateMultiFile(fileName, multiFileSize);
+   size_t compTotalSize = 0;
+   for (int i = 0; i < files.size(); i++) {
+      compTotalSize += files[i].size();
    }
 
+   std::cout << "--------------------- INPUT INFORMATION ---------------------" << std::endl;
+   std::cout << "file name       : " << fileName.c_str() << std::endl;
+   std::cout << "compressed (B)  : " << compTotalSize << std::endl;
+   std::cout << "repetitions     : " << repetitions << std::endl;
+   std::cout << "threads         : " << nThreads << std::endl;
+
+   std::thread threadPool[nThreads];
+   std::vector<float> decompTimes;
+   result_t result(decompSize * multiFileSize);
+   for (int i = 0; i < repetitions; i++) {
+      std::atomic<bool> startRunning(false);
+      for (int t = 0; t < nThreads; t++) {
+         threadPool[t] =
+            std::thread(Decompress, t, nThreads, std::ref(files), &result, decompSize, std::ref(startRunning));
+      }
+
+      auto start = Clock::now();
+      startRunning.store(true);
+      for (int t = 0; t < nThreads; t++) {
+         threadPool[t].join();
+      }
+      decompTimes.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count() / 1e6);
+   }
+
+   std::cout << "--------------------- OUTPUT INFORMATION ---------------------" << std::endl;
    std::cout << "decompressed (B): " << result.data.size() << std::endl;
    std::cout << "avg time (ms)   : " << GetMean(decompTimes) << std::endl;
    std::cout << "std deviation   : " << GetStdDev(decompTimes) << std::endl;
-   std::cout << "ratio           : " << data.size() / (double) decompSize << std::endl;
+   std::cout << "ratio           : " << compTotalSize / (double)decompSize << std::endl;
 
-   if (!output_file.empty()) {
-      std::cout << "output file     : " << output_file.c_str() << std::endl;
-      auto fp = fopen(output_file.c_str(), "w");
+   if (!outputFile.empty()) {
+      std::cout << "output file     : " << outputFile.c_str() << std::endl;
+      auto fp = fopen(outputFile.c_str(), "w");
       for (auto i = 0; i < result.data.size(); i++) {
          fprintf(fp, "%c", result.data[i]);
       }

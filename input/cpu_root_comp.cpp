@@ -18,7 +18,7 @@ using ROOT::Experimental::Detail::RNTupleCompressor;
 bool verbose = false;
 
 struct result_t {
-   std::vector<char> data;
+   std::vector<unsigned char> data;
 
    result_t() {}
    result_t(size_t compressed_size) : data(compressed_size) {}
@@ -55,23 +55,21 @@ int main(int argc, char *argv[])
       return 1;
    }
 
-   const std::vector<char> &data = readFile(file_name);
+   const std::vector<char> &data = ReadFile(file_name);
    size_t input_buffer_len = data.size();
 
    std::cout << "--------------------- INPUT INFORMATION ---------------------" << std::endl;
    std::cout << "file name: " << file_name.c_str() << std::endl;
    std::cout << "uncompressed (B): " << input_buffer_len << std::endl;
+   std::cout << "method          : " << type << std::endl;
 
    result_t result;
 
    if (type == "zstd") {
-      std::cout << "method: zstd" << std::endl;
       result = Compress(data, 505);
    } else if (type == "lz4") {
-      std::cout << "method: lz4" << std::endl;
       result = Compress(data, 404);
    } else if (type == "zlib") {
-      std::cout << "method: zlib" << std::endl;
       result = Compress(data, 101);
    } else {
       fprintf(stderr, "Unknown compression type :%s\n", type.c_str());
