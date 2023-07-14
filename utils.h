@@ -22,7 +22,7 @@ float GetStdDev(const std::vector<float> &vec)
  * File reading
  */
 
-std::vector<char> readFile(const std::string &filename)
+std::vector<char> ReadFile(const std::string &filename)
 {
    std::vector<char> buffer(4096);
    std::vector<char> hCompressed;
@@ -37,4 +37,11 @@ std::vector<char> readFile(const std::string &filename)
    } while (num > 0);
 
    return hCompressed;
+}
+
+std::vector<std::vector<char>> GenerateMultiFile(const std::string &filename, int n)
+{
+   auto file = ReadFile(filename);
+   std::vector<std::vector<char>> multiFile(n, file);
+   return multiFile;
 }

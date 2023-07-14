@@ -86,9 +86,11 @@ class GPUDecompressor {
 private:
    cudaStream_t stream;
    size_t nChunks;
+   size_t compTotalSize;
 
    // Host dDecompressed
-   std::vector<char> hCompressed, hDecompressed;
+   std::vector<std::vector<char>> hCompressed;
+   std::vector<char> hDecompressed;
    std::vector<size_t> hCompSizes, hDecompSizes;
 
    // Device dDecompressed;
@@ -145,43 +147,50 @@ private:
       auto cpuConfigureStart = Clock::now();
       auto cpuConfigureEnd = Clock::now();
 
-      size_t remainder = hCompressed.size();
-      unsigned char *source = const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(hCompressed.data()));
-
-      // Loop over the chunks to determine their sizes from the header
       int decompressedTotalSize = 0;
       int maxUncompressedChunkSize = 0;
-      do {
-         int szSource;
-         int szTarget;
-         int retval = R__unzip_header(&szSource, source, &szTarget);
-         R__ASSERT(retval == 0);
-         R__ASSERT(szSource > 0);
-         R__ASSERT(szTarget > szSource);
-         R__ASSERT(static_cast<unsigned int>(szSource) <= hCompressed.size());
+      for (int i = 0; i < hCompressed.size(); i++) {
+         size_t remainder = hCompressed[i].size();
+         unsigned char *source =
+            const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(hCompressed[i].data()));
 
-         nChunks++;
-         hCompSizes.push_back(szSource);
-         hDecompSizes.push_back(szTarget);
+         // Loop over the chunks to determine their sizes from the header
+         do {
+            int szSource;
+            int szTarget;
+            int retval = R__unzip_header(&szSource, source, &szTarget);
+            R__ASSERT(retval == 0);
+            R__ASSERT(szSource > 0);
+            R__ASSERT(szTarget > szSource);
+            R__ASSERT(static_cast<unsigned int>(szSource) <= hCompressed[i].size());
 
-         decompressedTotalSize += szTarget;
-         if (szTarget > maxUncompressedChunkSize)
-            maxUncompressedChunkSize = szTarget;
+            nChunks++;
+            hCompSizes.push_back(szSource);
+            hDecompSizes.push_back(szTarget);
 
-         // Move to next chunk
-         source += szSource;
-         remainder -= szSource;
-      } while (remainder > 0);
-      R__ASSERT(remainder == 0);
+            decompressedTotalSize += szTarget;
+            if (szTarget > maxUncompressedChunkSize)
+               maxUncompressedChunkSize = szTarget;
+
+            // Move to next chunk
+            source += szSource;
+            remainder -= szSource;
+         } while (remainder > 0);
+         R__ASSERT(remainder == 0);
+      }
 
       hDecompressed.resize(decompressedTotalSize);
       cpuConfigureEnd = Clock::now();
 
       // Set up buffers for the compressed and decompressed data on the device.
       cudaEventRecord(memStart, stream);
-      ERRCHECK(cudaMallocAsync(&dCompressed, hCompressed.size() * sizeof(char), stream));
-      ERRCHECK(cudaMemcpyAsync(dCompressed, hCompressed.data(), hCompressed.size() * sizeof(char),
-                               cudaMemcpyHostToDevice, stream));
+      ERRCHECK(cudaMallocAsync(&dCompressed, compTotalSize * sizeof(char), stream));
+      int offset = 0;
+      for (int i = 0; i < hCompressed.size(); i++) {
+         ERRCHECK(cudaMemcpyAsync(&dCompressed[offset], hCompressed[i].data(), hCompressed[i].size() * sizeof(char),
+                                  cudaMemcpyHostToDevice, stream));
+         offset += hCompressed[i].size();
+      }
       ERRCHECK(cudaMallocAsync(&dDecompressed, decompressedTotalSize * sizeof(char), stream));
 
       ERRCHECK(cudaStreamSynchronize(stream));
@@ -232,8 +241,8 @@ private:
       ERRCHECK(cudaEventDestroy(memStart));
       ERRCHECK(cudaEventDestroy(memEnd));
 
+      std::cout << "chunks        : " << nChunks << std::endl;
       if (verbose) {
-         std::cout << "chunks        : " << nChunks << std::endl;
          PrintBatch<<<1, 1, 0, stream>>>(dCompressedChunkPointers, dCompSizes, dCompressed, nChunks);
          ERRCHECK(cudaPeekAtLastError());
          PrintBatch<<<1, 1, 0, stream>>>(dDecompressedChunkPointers, dDecompSizes, dDecompressed, nChunks);
@@ -268,9 +277,10 @@ private:
    }
 
 public:
-   GPUDecompressor(const std::vector<char> &data) : hCompressed(data)
+   GPUDecompressor(const std::vector<std::vector<char>> &data, const size_t totalSize) : hCompressed(data)
    {
       nChunks = 0;
+      compTotalSize = totalSize;
       ERRCHECK(cudaStreamCreate(&stream));
    }
 
@@ -326,45 +336,49 @@ public:
    }
 };
 
-
 /**
  * Main
  */
 
 int main(int argc, char *argv[])
 {
-   std::string file_name, type, output_file;
+   std::string fileName, type, outputFile;
    int repetitions = 1;
+   int multiFileSize = 1;
 
    int c;
-   while ((c = getopt(argc, argv, "f:t:o:vn:")) != -1) {
+   while ((c = getopt(argc, argv, "f:t:o:vn:m:")) != -1) {
       switch (c) {
-      case 'f': file_name = optarg; break;
+      case 'f': fileName = optarg; break;
       case 't': type = optarg; break;
-      case 'o': output_file = optarg; break;
+      case 'o': outputFile = optarg; break;
       case 'v': verbose = true; break;
       case 'n': repetitions = atoi(optarg); break;
+      case 'm': multiFileSize = atoi(optarg); break;
       default: std::cout << "Got unknown parse returns: " << char(c) << std::endl; return 1;
       }
    }
 
-   if (file_name.empty() || type.empty()) {
+   if (fileName.empty() || type.empty()) {
       std::cerr << "Must specify a file (-f) and decompression type (-t)" << std::endl;
       return 1;
    }
 
-   const std::vector<char> &data = readFile(file_name);
-   size_t input_buffer_len = data.size();
+   auto files = GenerateMultiFile(fileName, multiFileSize);
+   size_t totalSize = 0;
+   for (int i = 0; i < files.size(); i++) {
+      totalSize += files[i].size();
+   }
 
    std::cout << "--------------------- INPUT INFORMATION ---------------------" << std::endl;
-   std::cout << "file name     : " << file_name.c_str() << std::endl;
-   std::cout << "compressed (B): " << input_buffer_len << std::endl;
+   std::cout << "file name     : " << fileName.c_str() << std::endl;
+   std::cout << "compressed (B): " << totalSize << std::endl;
    std::cout << "type          : " << type.c_str() << std::endl;
 
    std::vector<float> setupTimes, decompTimes;
    Result result;
    for (int i = 0; i < repetitions; i++) {
-      GPUDecompressor decompressor(data);
+      GPUDecompressor decompressor(files, totalSize);
       decompressor.Decompress(type);
       result = decompressor.GetResult();
       setupTimes.push_back(result.setupTime);
@@ -375,11 +389,12 @@ int main(int argc, char *argv[])
    std::cout << "decompressed (B): " << result.decompressed.size() << std::endl;
    std::cout << "Avg setup (ms)\tStdDev\t\tAvg decomp (ms)\t\tStdDev\t\tRatio\t\tRepetitions" << std::endl;
    std::cout << GetMean(setupTimes) << "\t\t" << GetStdDev(setupTimes) << "\t\t" << GetMean(decompTimes) << "\t\t\t"
-             << GetStdDev(decompTimes) << "\t\t" << result.decompressed.size() / (double) data.size() << "\t\t" << repetitions << std::endl;
+             << GetStdDev(decompTimes) << "\t\t" << result.decompressed.size() / (double)totalSize << "\t\t"
+             << repetitions << std::endl;
 
-   if (!output_file.empty()) {
-      std::cout << "output file: " << output_file.c_str() << std::endl;
-      auto fp = fopen(output_file.c_str(), "w");
+   if (!outputFile.empty()) {
+      std::cout << "output file: " << outputFile.c_str() << std::endl;
+      auto fp = fopen(outputFile.c_str(), "w");
       for (auto i = 0; i < result.decompressed.size(); i++) {
          fprintf(fp, "%c", result.decompressed[i]);
       }
