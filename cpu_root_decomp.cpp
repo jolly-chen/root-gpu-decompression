@@ -30,7 +30,7 @@ struct result_t {
 };
 
 void Decompress(const int tid, const int nThreads, const std::vector<std::vector<char>> &data, result_t *result,
-               const int decompSize, std::atomic<bool> &startRunning)
+                const int decompSize, std::atomic<bool> &startRunning)
 {
    while (!startRunning) {
    }
@@ -48,7 +48,7 @@ int main(int argc, char *argv[])
    int decompSize = -1;
    int repetitions = 1;
    int multiFileSize = 1;
-   int nThreads = std::max(1U, std::thread::hardware_concurrency());
+   int nThreads = std::max(1, (int)std::thread::hardware_concurrency());
 
    int c;
    while ((c = getopt(argc, argv, "f:o:dvs:n:m:c:")) != -1) {

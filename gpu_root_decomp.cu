@@ -52,16 +52,16 @@ __global__ void PrintBatch(void **chunk_pointers, size_t *chunk_sizes, char *dat
    printf("total_size: %li\n", total_size);
 
    printf("data:\n");
-   for (int i = 0; i < 100; i++) {
-      printf("%c ", data[i]);
+   for (int k = 0; k < 100; k++) {
+      printf("%c ", data[k]);
    }
    printf("\n");
 
    printf("chunk_pointers:\n");
-   for (int i = 0; i < nChunks; i++) {
-      printf("\tchunk %d:\n\t\t", i);
-      for (int j = 0; j < min(100, (int)chunk_sizes[i]); j++) {
-         printf("%c ", ((char *)chunk_pointers[i])[j]);
+   for (int c = 0; c < nChunks; c++) {
+      printf("\tchunk %d:\n\t\t", c);
+      for (int j = 0; j < min(100, (int)chunk_sizes[c]); j++) {
+         printf("%c ", ((char *)chunk_pointers[c])[j]);
       }
       printf("\n");
    }
@@ -138,21 +138,14 @@ private:
       ERRCHECK(cudaEventCreate(&decompStart));
       ERRCHECK(cudaEventCreate(&decompEnd));
 
-      // For measuring memory allocation and transfer times on the GPU
-      cudaEvent_t memStart, memEnd;
-      ERRCHECK(cudaEventCreate(&memStart));
-      ERRCHECK(cudaEventCreate(&memEnd));
-
       // For measuring setup time on the CPU
-      auto cpuConfigureStart = Clock::now();
-      auto cpuConfigureEnd = Clock::now();
+      auto configureStart = Clock::now();
 
-      int decompressedTotalSize = 0;
+      size_t decompressedTotalSize = 0;
       int maxUncompressedChunkSize = 0;
       for (int i = 0; i < hCompressed.size(); i++) {
          size_t remainder = hCompressed[i].size();
-         unsigned char *source =
-            const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(hCompressed[i].data()));
+         auto source = const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(hCompressed[i].data()));
 
          // Loop over the chunks to determine their sizes from the header
          do {
@@ -162,7 +155,7 @@ private:
             R__ASSERT(retval == 0);
             R__ASSERT(szSource > 0);
             R__ASSERT(szTarget > szSource);
-            R__ASSERT(static_cast<unsigned int>(szSource) <= hCompressed[i].size());
+            R__ASSERT(static_cast<unsigned char>(szSource) <= hCompressed[i].size());
 
             nChunks++;
             hCompSizes.push_back(szSource);
@@ -180,10 +173,8 @@ private:
       }
 
       hDecompressed.resize(decompressedTotalSize);
-      cpuConfigureEnd = Clock::now();
 
       // Set up buffers for the compressed and decompressed data on the device.
-      cudaEventRecord(memStart, stream);
       ERRCHECK(cudaMallocAsync(&dCompressed, compTotalSize * sizeof(char), stream));
       int offset = 0;
       for (int i = 0; i < hCompressed.size(); i++) {
@@ -193,28 +184,23 @@ private:
       }
       ERRCHECK(cudaMallocAsync(&dDecompressed, decompressedTotalSize * sizeof(char), stream));
 
+      // Wait for the buffers to be allocated to create chunk pointers.
       ERRCHECK(cudaStreamSynchronize(stream));
 
       // Set up pointers to each chunk in the device buffer for the compressed data.
-      cpuConfigureStart = Clock::now();
       auto cPtrs = GetCompressedChunkPtrs();
-      cpuConfigureEnd = Clock::now();
       ERRCHECK(cudaMallocAsync(&dCompressedChunkPointers, nChunks * sizeof(void *), stream));
       ERRCHECK(cudaMemcpyAsync(dCompressedChunkPointers, cPtrs.data(), nChunks * sizeof(void *), cudaMemcpyHostToDevice,
                                stream));
 
       // Set up pointers to each chunk in the device buffer for the decompressed data.
-      cpuConfigureStart = Clock::now();
       auto dcPtrs = GetDecompressedChunkPtrs();
-      cpuConfigureEnd = Clock::now();
       ERRCHECK(cudaMallocAsync(&dDecompressedChunkPointers, nChunks * sizeof(void *), stream));
       ERRCHECK(cudaMemcpyAsync(dDecompressedChunkPointers, dcPtrs.data(), nChunks * sizeof(void *),
                                cudaMemcpyHostToDevice, stream));
 
       // Copy compressed and decompressed sizes of each chunk
-      cpuConfigureStart = Clock::now();
       std::transform(hCompSizes.begin(), hCompSizes.end(), hCompSizes.begin(), [&](auto x) { return x - HDRSIZE; });
-      cpuConfigureEnd = Clock::now();
       ERRCHECK(cudaMallocAsync(&dCompSizes, hCompSizes.size() * sizeof(size_t), stream));
       ERRCHECK(cudaMemcpyAsync(dCompSizes, hCompSizes.data(), hCompSizes.size() * sizeof(size_t),
                                cudaMemcpyHostToDevice, stream));
@@ -233,15 +219,10 @@ private:
       // Status pointers
       ERRCHECK(cudaMallocAsync(&dStatusPtrs, nChunks * sizeof(nvcompStatus_t), stream));
 
-      ERRCHECK(cudaEventRecord(memEnd, stream));
-      ERRCHECK(cudaEventSynchronize(memEnd));
-      ERRCHECK(cudaEventElapsedTime(&setupTime, memStart, memEnd));
-      setupTime +=
-         std::chrono::duration_cast<std::chrono::nanoseconds>(cpuConfigureEnd - cpuConfigureStart).count() / 1e6;
-      ERRCHECK(cudaEventDestroy(memStart));
-      ERRCHECK(cudaEventDestroy(memEnd));
-
+      ERRCHECK(cudaStreamSynchronize(stream));
+      setupTime += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - configureStart).count() / 1e6;
       std::cout << "chunks        : " << nChunks << std::endl;
+
       if (verbose) {
          PrintBatch<<<1, 1, 0, stream>>>(dCompressedChunkPointers, dCompSizes, dCompressed, nChunks);
          ERRCHECK(cudaPeekAtLastError());
@@ -355,7 +336,7 @@ int main(int argc, char *argv[])
       case 'v': verbose = true; break;
       case 'n': repetitions = atoi(optarg); break;
       case 'm': multiFileSize = atoi(optarg); break;
-      default: std::cout << "Got unknown parse returns: " << char(c) << std::endl; return 1;
+      default: std::cout << "Ignoring unknown parse returns: " << char(c) << std::endl; ;
       }
    }
 
