@@ -137,6 +137,7 @@ private:
       // For measuring decompression runtime
       ERRCHECK(cudaEventCreate(&decompStart));
       ERRCHECK(cudaEventCreate(&decompEnd));
+      ERRCHECK(cudaDeviceSynchronize());
 
       // For measuring setup time on the CPU
       auto configureStart = Clock::now();
@@ -219,8 +220,8 @@ private:
       // Status pointers
       ERRCHECK(cudaMallocAsync(&dStatusPtrs, nChunks * sizeof(nvcompStatus_t), stream));
 
-      ERRCHECK(cudaStreamSynchronize(stream));
-      setupTime += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - configureStart).count() / 1e6;
+      ERRCHECK(cudaDeviceSynchronize());
+      setupTime = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - configureStart).count() / 1e6;
       std::cout << "chunks        : " << nChunks << std::endl;
 
       if (verbose) {
@@ -262,6 +263,8 @@ public:
    {
       nChunks = 0;
       compTotalSize = totalSize;
+      setupTime = 0;
+      decompTime = 0;
       ERRCHECK(cudaStreamCreate(&stream));
    }
 
@@ -326,9 +329,10 @@ int main(int argc, char *argv[])
    std::string fileName, type, outputFile;
    int repetitions = 1;
    int multiFileSize = 1;
+   int warmUp = 10;
 
    int c;
-   while ((c = getopt(argc, argv, "f:t:o:vn:m:")) != -1) {
+   while ((c = getopt(argc, argv, "f:t:o:vn:m:w:")) != -1) {
       switch (c) {
       case 'f': fileName = optarg; break;
       case 't': type = optarg; break;
@@ -336,6 +340,7 @@ int main(int argc, char *argv[])
       case 'v': verbose = true; break;
       case 'n': repetitions = atoi(optarg); break;
       case 'm': multiFileSize = atoi(optarg); break;
+      case 'w': warmUp = atoi(optarg); break;
       default: std::cout << "Ignoring unknown parse returns: " << char(c) << std::endl; ;
       }
    }
@@ -358,20 +363,23 @@ int main(int argc, char *argv[])
 
    std::vector<float> setupTimes, decompTimes;
    Result result;
-   for (int i = 0; i < repetitions; i++) {
+   for (int i = 0; i < repetitions + warmUp; i++) {
       GPUDecompressor decompressor(files, totalSize);
       decompressor.Decompress(type);
       result = decompressor.GetResult();
-      setupTimes.push_back(result.setupTime);
-      decompTimes.push_back(result.decompTime);
+
+      if (i >= warmUp) {
+         setupTimes.push_back(result.setupTime);
+         decompTimes.push_back(result.decompTime);
+      }
    }
 
    std::cout << "--------------------- OUTPUT INFORMATION ---------------------" << std::endl;
    std::cout << "decompressed (B): " << result.decompressed.size() << std::endl;
-   std::cout << "Avg setup (ms)\tStdDev\t\tAvg decomp (ms)\t\tStdDev\t\tRatio\t\tRepetitions" << std::endl;
-   std::cout << GetMean(setupTimes) << "\t\t" << GetStdDev(setupTimes) << "\t\t" << GetMean(decompTimes) << "\t\t\t"
+   std::cout << "Avg setup (ms)\tStdDev\t\tAvg decomp (ms)\t\tStdDev\t\tRatio\t\tRepetitions\tWarmup" << std::endl;
+   std::cout << GetMean(setupTimes) << "\t" << GetStdDev(setupTimes) << "\t\t" << GetMean(decompTimes) << "\t\t"
              << GetStdDev(decompTimes) << "\t\t" << result.decompressed.size() / (double)totalSize << "\t\t"
-             << repetitions << std::endl;
+             << repetitions << "\t\t" << warmUp << std::endl;
 
    if (!outputFile.empty()) {
       std::cout << "output file: " << outputFile.c_str() << std::endl;

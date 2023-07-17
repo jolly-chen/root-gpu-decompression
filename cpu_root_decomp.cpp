@@ -49,9 +49,10 @@ int main(int argc, char *argv[])
    int repetitions = 1;
    int multiFileSize = 1;
    int nThreads = std::max(1, (int)std::thread::hardware_concurrency());
+   int warmUp = 10;
 
    int c;
-   while ((c = getopt(argc, argv, "f:o:dvs:n:m:c:")) != -1) {
+   while ((c = getopt(argc, argv, "f:o:dvs:n:m:c:w:")) != -1) {
       switch (c) {
       case 'f': fileName = optarg; break;
       case 'o': outputFile = optarg; break;
@@ -60,6 +61,7 @@ int main(int argc, char *argv[])
       case 'm': multiFileSize = atoi(optarg); break;
       case 'n': repetitions = atoi(optarg); break;
       case 'c': nThreads = atoi(optarg); break;
+      case 'w': warmUp = atoi(optarg); break;
       default: std::cout << "Ignoring unknown parse returns: " << char(c) << std::endl;
       }
    }
@@ -79,12 +81,13 @@ int main(int argc, char *argv[])
    std::cout << "file name       : " << fileName.c_str() << std::endl;
    std::cout << "compressed (B)  : " << compTotalSize << std::endl;
    std::cout << "repetitions     : " << repetitions << std::endl;
+   std::cout << "warmup          : " << warmUp << std::endl;
    std::cout << "threads         : " << nThreads << std::endl;
 
    std::thread threadPool[nThreads];
    std::vector<float> decompTimes;
    result_t result(decompSize * multiFileSize);
-   for (int i = 0; i < repetitions; i++) {
+   for (int i = 0; i < repetitions + warmUp; i++) {
       std::atomic<bool> startRunning(false);
       for (int t = 0; t < nThreads; t++) {
          threadPool[t] =
@@ -96,7 +99,11 @@ int main(int argc, char *argv[])
       for (int t = 0; t < nThreads; t++) {
          threadPool[t].join();
       }
-      decompTimes.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count() / 1e6);
+
+      if (i >= warmUp) {
+         decompTimes.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count() /
+                               1e6);
+      }
    }
 
    std::cout << "--------------------- OUTPUT INFORMATION ---------------------" << std::endl;

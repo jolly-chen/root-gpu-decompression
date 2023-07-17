@@ -1,11 +1,13 @@
 import numpy as np
+import pandas as pd
 import ROOT
 import subprocess
 import glob
 import os
+import argparse
 
 
-def run_benchmark_gpu(n, files):
+def run_benchmark_gpu(n, m, w, files):
     n_pts = len(files)
     setup_times = np.zeros(n_pts)
     dev_st = np.zeros(n_pts)
@@ -24,14 +26,18 @@ def run_benchmark_gpu(n, files):
                 f.split(".")[-1],
                 "-n",
                 str(n),
+                "-m",
+                str(m),
+                "-w",
+                str(w),
             ],
             stdout=subprocess.PIPE,
         )
         output = result.stdout.decode("utf-8").split()
         setup_times[i], dev_st[i], decomp_times[i], dev_dt[i], ratios[i] = [
-            float(o) for o in output[-6:-1]
+            float(o) for o in output[-7:-2]
         ]
-        sizes[i] = f.split(".")[1]
+        sizes[i] = int(f.split(".")[1]) * m
 
     # Sort the results
     sort_idx = np.argsort(sizes)
@@ -41,15 +47,16 @@ def run_benchmark_gpu(n, files):
     dev_dt = dev_dt[sort_idx]
     ratios = ratios[sort_idx]
     sizes = sizes[sort_idx]
-    print(setup_times, decomp_times, ratios, sizes)
+    print(setup_times, dev_st, decomp_times, dev_dt, ratios, sizes)
     return setup_times, dev_st, decomp_times, dev_dt, ratios, sizes
 
 
-def run_benchmark_cpu(n, files):
+def run_benchmark_cpu(n, m, w, files):
     n_pts = len(files)
     decomp_times = np.zeros(n_pts)
     dev_dt = np.zeros(n_pts)
     ratios = np.zeros(n_pts)
+    sizes = np.zeros(n_pts)
 
     for i, f in enumerate(files):
         result = subprocess.run(
@@ -61,6 +68,12 @@ def run_benchmark_cpu(n, files):
                 f.split(".")[1],
                 "-n",
                 str(n),
+                "-m",
+                str(m),
+                "-c",
+                str(),
+                "-w",
+                str(w),
             ],
             stdout=subprocess.PIPE,
         )
@@ -68,12 +81,14 @@ def run_benchmark_cpu(n, files):
         decomp_times[i] = float(output[-8])
         dev_dt[i] = float(output[-4])
         ratios[i] = float(output[-1])
+        sizes[i] = int(f.split(".")[1]) * m
 
     # Sort the result by compression ratio
-    sort_idx = np.argsort(ratios)
+    sort_idx = np.argsort(sizes)
     decomp_times = decomp_times[sort_idx]
     dev_dt = dev_dt[sort_idx]
-    print(decomp_times, dev_dt)
+    sizes = sizes[sort_idx]
+    print(decomp_times, dev_dt, sizes)
     return decomp_times, dev_dt
 
 
@@ -110,7 +125,14 @@ def plot_bar(c, gpu_results):
 
 def plot_line(c, cpu_results, gpu_results):
     cpu_decomp_times, cpu_dev_dt = cpu_results
-    gpu_setup_times, gpu_dev_st, gpu_decomp_times, gpu_dev_dt, ratios, sizes = gpu_results
+    (
+        gpu_setup_times,
+        gpu_dev_st,
+        gpu_decomp_times,
+        gpu_dev_dt,
+        ratios,
+        sizes,
+    ) = gpu_results
 
     n_pts = len(sizes)
     zeroes = np.zeros(n_pts, dtype=float)
@@ -125,13 +147,13 @@ def plot_line(c, cpu_results, gpu_results):
     g3 = ROOT.TGraphErrors(n_pts, sizes, cpu_decomp_times, zeroes, cpu_dev_dt)
 
     c.SetRightMargin(0.32)
-    c.SetLogx()
+    # c.SetLogx()
     mg.Add(g1)
     mg.Add(g2)
     mg.Add(g3)
 
-    mg.GetXaxis().SetTitle("Decompressed size")
-    mg.GetXaxis().SetLimits(0, np.max(sizes) + 0.5)
+    mg.GetXaxis().SetTitle("Decompressed size (B)")
+    mg.GetXaxis().SetLimits(0, np.max(sizes) + np.min(sizes))
     mg.GetYaxis().SetTitle("Time (ms)")
     mg.GetYaxis().SetLimits(0, np.max(gpu_decomp_times) + 10)
     mg.DrawClone("AL")
@@ -145,11 +167,20 @@ def plot_line(c, cpu_results, gpu_results):
 
 
 if __name__ == "__main__":
-    n = 5
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-n", "--n", help="Number of repetitions", type=int)
+    parser.add_argument("-w", "--w", help="Warmup", type=int)
+    parser.add_argument("-m", "--m", help="Multi file size", type=int)
+    args = parser.parse_args()
+
+    n = args.n if args.n else 5
+    m = args.m if args.m else 100
+    w = args.w if args.w else 5
+    print(f"n:{n} m:{m}")
     os.chdir("../input")
-    files = glob.glob("*.root.zstd")
+    files = glob.glob("uniform*.root.zstd")
 
     c = ROOT.TCanvas("c1", "Decompression of ROOT compressed files")
-    gpu_results = run_benchmark_gpu(n, files)
-    cpu_results = run_benchmark_cpu(n, files)
+    gpu_results = run_benchmark_gpu(n, m, w, files)
+    cpu_results = run_benchmark_cpu(n, m, w, files)
     plot_line(c, cpu_results, gpu_results)
