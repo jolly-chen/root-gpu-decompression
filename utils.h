@@ -4,18 +4,43 @@
 #include <numeric>
 #include <cmath>
 
-float GetMean(const std::vector<float> &vec)
+/**
+ * (Un)packing on CPU
+ */
+
+/// \brief Split encoding of elements, possibly into narrower column
+///
+/// Used to first cast and then split-encode in-memory values to the on-disk column. Swap bytes if necessary.
+template <typename DestT, typename SourceT>
+static void CastSplitPack(void *destination, const void *source, std::size_t count)
 {
-   return std::accumulate(vec.begin(), vec.end(), 0.0) / vec.size();
+   constexpr std::size_t N = sizeof(DestT);
+   auto splitArray = reinterpret_cast<char *>(destination);
+   auto src = reinterpret_cast<const SourceT *>(source);
+   for (std::size_t i = 0; i < count; ++i) {
+      DestT val = src[i];
+      for (std::size_t b = 0; b < N; ++b) {
+         splitArray[b * count + i] = reinterpret_cast<const char *>(&val)[b];
+      }
+   }
 }
 
-float GetStdDev(const std::vector<float> &vec)
+/// \brief Reverse split encoding of elements
+///
+/// Used to first unsplit a column, possibly storing elements in wider C++ types. Swaps bytes if necessary
+template <typename DestT, typename SourceT>
+static void CastSplitUnpack(void *destination, const void *source, std::size_t count)
 {
-   auto mean = GetMean(vec);
-   std::vector<double> diff(vec.size());
-   std::transform(vec.begin(), vec.end(), diff.begin(), [mean](double x) { return x - mean; });
-   double sq_sum = std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0);
-   return std::sqrt(sq_sum / vec.size());
+   constexpr std::size_t N = sizeof(SourceT);
+   auto dst = reinterpret_cast<DestT *>(destination);
+   auto splitArray = reinterpret_cast<const char *>(source);
+   for (std::size_t i = 0; i < count; ++i) {
+      SourceT val = 0;
+      for (std::size_t b = 0; b < N; ++b) {
+         reinterpret_cast<char *>(&val)[b] = splitArray[b * count + i];
+      }
+      dst[i] = val;
+   }
 }
 
 /**
@@ -44,4 +69,22 @@ std::vector<std::vector<char>> GenerateMultiFile(const std::string &filename, in
    auto file = ReadFile(filename);
    std::vector<std::vector<char>> multiFile(n, file);
    return multiFile;
+}
+
+/**
+ * Results processing
+ */
+
+float GetMean(const std::vector<float> &vec)
+{
+   return std::accumulate(vec.begin(), vec.end(), 0.0) / vec.size();
+}
+
+float GetStdDev(const std::vector<float> &vec)
+{
+   auto mean = GetMean(vec);
+   std::vector<double> diff(vec.size());
+   std::transform(vec.begin(), vec.end(), diff.begin(), [mean](double x) { return x - mean; });
+   double sq_sum = std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0);
+   return std::sqrt(sq_sum / vec.size());
 }

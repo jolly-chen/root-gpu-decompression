@@ -24,6 +24,8 @@ class TestSequence(unittest.TestCase):
         output_file = f"{self.output_folder}/{f}.out"
         expected = f"{self.input_folder}/{f.removesuffix(f'.root.{method}')}.in"
         CMD = f"./cpu_root_decomp -n {self.n} -f {input_file} -o {output_file} -s {f.split('.')[1]} -c 1"
+        if "pack" in f:
+            CMD += " -p"
 
         print(CMD)
         subprocess.run([*CMD.split()])
@@ -37,6 +39,8 @@ class TestSequence(unittest.TestCase):
         output_file = f"{self.output_folder}/{f}.out"
         expected = f"{self.input_folder}/{f.removesuffix(f'.root.{method}')}.in"
         CMD = f"./gpu_root_decomp -n 1 -f {input_file} -o {output_file} -t {method}"
+        if "pack" in f:
+            CMD += " -p"
 
         print(CMD)
         subprocess.run([*CMD.split()])
@@ -56,6 +60,8 @@ class TestSequence(unittest.TestCase):
                 ft.write(fe.read() * m)
 
         CMD = f"./cpu_root_decomp -n {self.n} -f {input_file} -o {output_file} -s {f.split('.')[1]} -m {m}"
+        if "pack" in f:
+            CMD += " -p"
 
         print(CMD)
         subprocess.run([*CMD.split()])
@@ -76,6 +82,8 @@ class TestSequence(unittest.TestCase):
                 ft.write(fe.read() * m)
 
         CMD = f"./gpu_root_decomp -n 1 -f {input_file} -o {output_file} -t {method} -m {m}"
+        if "pack" in f:
+            CMD += " -p"
 
         print(CMD)
         subprocess.run([*CMD.split()])
