@@ -7,7 +7,11 @@ import os
 import argparse
 
 
-def run_benchmark_gpu(n, m, w, files):
+def sort_lists(to_sort, sort_idx):
+    return [l[sort_idx] for l in to_sort]
+
+
+def run_benchmark_gpu(files, n, m, w):
     n_pts = len(files)
     setup_times = np.zeros(n_pts)
     dev_st = np.zeros(n_pts)
@@ -40,18 +44,11 @@ def run_benchmark_gpu(n, m, w, files):
         sizes[i] = int(f.split(".")[1]) * m
 
     # Sort the results
-    sort_idx = np.argsort(sizes)
-    setup_times = setup_times[sort_idx]
-    dev_st = dev_st[sort_idx]
-    decomp_times = decomp_times[sort_idx]
-    dev_dt = dev_dt[sort_idx]
-    ratios = ratios[sort_idx]
-    sizes = sizes[sort_idx]
     print(setup_times, dev_st, decomp_times, dev_dt, ratios, sizes)
     return setup_times, dev_st, decomp_times, dev_dt, ratios, sizes
 
 
-def run_benchmark_cpu(n, m, w, files):
+def run_benchmark_cpu(files, n, m, w):
     n_pts = len(files)
     decomp_times = np.zeros(n_pts)
     dev_dt = np.zeros(n_pts)
@@ -84,10 +81,6 @@ def run_benchmark_cpu(n, m, w, files):
         sizes[i] = int(f.split(".")[1]) * m
 
     # Sort the result by compression ratio
-    sort_idx = np.argsort(sizes)
-    decomp_times = decomp_times[sort_idx]
-    dev_dt = dev_dt[sort_idx]
-    sizes = sizes[sort_idx]
     print(decomp_times, dev_dt, sizes)
     return decomp_times, dev_dt
 
@@ -123,7 +116,7 @@ def plot_bar(c, gpu_results):
     l.DrawClone()
 
 
-def plot_line(c, cpu_results, gpu_results):
+def plot_line(c, cpu_results, gpu_results, title):
     cpu_decomp_times, cpu_dev_dt = cpu_results
     (
         gpu_setup_times,
@@ -152,6 +145,7 @@ def plot_line(c, cpu_results, gpu_results):
     mg.Add(g2)
     mg.Add(g3)
 
+    mg.SetTitle(title)
     mg.GetXaxis().SetTitle("Decompressed size (B)")
     mg.GetXaxis().SetLimits(0, np.max(sizes) + np.min(sizes))
     mg.GetYaxis().SetTitle("Time (ms)")
@@ -167,20 +161,53 @@ def plot_line(c, cpu_results, gpu_results):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-n", "--n", help="Number of repetitions", type=int)
-    parser.add_argument("-w", "--w", help="Warmup", type=int)
-    parser.add_argument("-m", "--m", help="Multi file size", type=int)
-    args = parser.parse_args()
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("-n", "--n", help="Number of repetitions", type=int)
+    # parser.add_argument("-w", "--w", help="Warmup", type=int)
+    # parser.add_argument("-m", "--m", help="Multi file size", type=int)
+    # args = parser.parse_args()
 
-    n = args.n if args.n else 5
-    m = args.m if args.m else 100
-    w = args.w if args.w else 5
-    print(f"n:{n} m:{m}")
+    # n = args.n if args.n else 5
+    # m = args.m if args.m else 100
+    # w = args.w if args.w else 5
+    # print(f"n:{n} m:{m}")
+    # os.chdir("../input")
+    # files = glob.glob("uniform*.root.zstd")
+
+    # c = ROOT.TCanvas("c1", "Decompression of ROOT compressed files")
+    # gpu_results = run_benchmark_gpu(n, m, w, files)
+    # cpu_results = run_benchmark_cpu(n, m, w, files)
+    # plot_line(c, cpu_results, gpu_results)
+
+
+
     os.chdir("../input")
-    files = glob.glob("uniform*.root.zstd")
+    c = ROOT.TCanvas("c1")
+    c.Divide(3,1)
 
-    c = ROOT.TCanvas("c1", "Decompression of ROOT compressed files")
-    gpu_results = run_benchmark_gpu(n, m, w, files)
-    cpu_results = run_benchmark_cpu(n, m, w, files)
-    plot_line(c, cpu_results, gpu_results)
+    c.cd(1)
+    n = 10
+    w = 10
+    m = 100
+    files = glob.glob("low_compression*.root.zstd")
+    gpu_results = run_benchmark_gpu(files, n, m, w)
+    cpu_results = run_benchmark_cpu(files, n, m, w)
+    cpu_results = sort_lists(cpu_results, np.argsort(cpu_results[-1])) # Sort by size
+    gpu_results = sort_lists(gpu_results, np.argsort(gpu_results[-1])) # Sort by size
+    title = f"Decompression of ROOT compressed files with average ratio: {np.mean(gpu_results[-2])}"
+    plot_line(c, cpu_results, gpu_results, title)
+
+    c.cd(2)
+    n = 10
+    w = 10
+    m = 100
+    files = glob.glob("mid_compression*.root.zstd")
+    gpu_results = run_benchmark_gpu(files, n, m, w)
+    cpu_results = run_benchmark_cpu(files, n, m, w)
+    cpu_results = sort_lists(cpu_results, np.argsort(cpu_results[-1])) # Sort by size
+    gpu_results = sort_lists(gpu_results, np.argsort(gpu_results[-1])) # Sort by size
+    title = f"Decompression of ROOT compressed files with average ratio: {np.mean(gpu_results[-2])}"
+    c = ROOT.TCanvas("c1", title)
+    plot_line(c, cpu_results, gpu_results, title)
+
+    c.DrawClone()

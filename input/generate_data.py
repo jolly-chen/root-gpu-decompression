@@ -29,11 +29,11 @@ if __name__ == "__main__":
         1000 * s for s in np.logspace(2, 7, base=2, num=6).astype(int)
     ]:  # 4KB to 128 KB
         # Maximum compression ratio
-        generate(f"ones.{size}", np.ones(size, dtype=np.uint8) * 49)
+        generate(f"max_compression.{size}", np.ones(size, dtype=np.uint8) * 49)
 
         # Low compression ratio
         generate(
-            f"uniform_random.{size}",
+            f"low_compression.{size}",
             np.around(
                 np.minimum(255, np.maximum(-1, np.random.normal(128, 32, size=size)))
             ).astype(np.uint8),
@@ -41,7 +41,7 @@ if __name__ == "__main__":
 
         # Medium compression ratio
         generate(
-            f"gauss_random.{size}",
+            f"mid_compression.{size}",
             np.around(
                 np.minimum(255, np.maximum(-1, np.random.normal(128, 1, size=size)))
             ).astype(np.uint8),
