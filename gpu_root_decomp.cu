@@ -28,15 +28,6 @@ bool verbose = false;
 // - 3 bytes to identify the inflated buffer size.
 #define HDRSIZE 9
 
-#define ERRCHECK(err) __checkCudaErrors((err), __func__, __FILE__, __LINE__)
-inline static void __checkCudaErrors(cudaError_t error, std::string func, std::string file, int line)
-{
-   if (error != cudaSuccess) {
-      fprintf(stderr, (func + "(), " + file + ":" + std::to_string(line)).c_str(), "%s\n", cudaGetErrorString(error));
-      throw std::bad_alloc();
-   }
-}
-
 __global__ void PrintBatch(void **chunk_pointers, size_t *chunk_sizes, char *data, size_t nChunks)
 {
    printf("------------------------- BATCH ----------------------------\n");
@@ -254,7 +245,7 @@ private:
       }
 
       if (packed) {
-         Unpack<float, float><<<ceil(decompTotalSize / 256.), 256, 0, stream>>>(
+         Unpack1<float, float><<<ceil(decompTotalSize / 256.), 256, 0, stream>>>(
             dUnpackOut, dDecompressed, dDecompSizes, nChunks, decompTotalSize);
          ERRCHECK(cudaPeekAtLastError());
          dDecompressed = dUnpackOut;
