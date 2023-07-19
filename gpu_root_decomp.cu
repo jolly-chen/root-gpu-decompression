@@ -70,7 +70,7 @@ __global__ void CheckStatuses(nvcompStatus_t *statusPtrs, size_t nChunks)
 }
 
 struct Result {
-   float setupTime, decompTime;
+   float setupTime, decompTime, unpackTime;
    std::vector<char> decompressed;
 };
 
@@ -94,10 +94,7 @@ private:
    void *dTempBuf;
    nvcompStatus_t *dStatusPtrs;
 
-   // CUDA events to measure decompression time
-   cudaEvent_t decompStart, decompEnd;
-
-   float setupTime, decompTime;
+   float setupTime, decompTime, unpackTime;
 
    inline std::vector<void *> GetCompressedChunkPtrs()
    {
@@ -127,12 +124,7 @@ private:
    template <typename GetDecompressSizeFunc, typename GetTempSizeFunc>
    void Configure(GetDecompressSizeFunc nvcompGetDecompressSize, GetTempSizeFunc nvcompGetDecompressTempSize)
    {
-      // For measuring decompression runtime
-      ERRCHECK(cudaEventCreate(&decompStart));
-      ERRCHECK(cudaEventCreate(&decompEnd));
-      ERRCHECK(cudaDeviceSynchronize());
-
-      // For measuring setup time on the CPU
+      // For measuring setup time
       auto configureStart = Clock::now();
 
       decompTotalSize = 0;
@@ -235,6 +227,13 @@ private:
    {
       Configure(nvcompGetDecompressSize, nvcompGetDecompressTempSize);
 
+      // CUDA events to measure time
+      cudaEvent_t decompStart, decompEnd, unpackStart, unpackEnd;
+
+      // For measuring decompression runtime
+      ERRCHECK(cudaEventCreate(&decompStart));
+      ERRCHECK(cudaEventCreate(&decompEnd));
+
       // Run decompression
       ERRCHECK(cudaEventRecord(decompStart, stream));
       nvcompStatus_t status =
@@ -243,16 +242,29 @@ private:
       if (status != nvcompSuccess) {
          throw std::runtime_error("ERROR: nvcompBatched*DecompressAsync() not successful");
       }
+      ERRCHECK(cudaEventRecord(decompEnd, stream));
+      ERRCHECK(cudaEventSynchronize(decompEnd));
+      ERRCHECK(cudaEventElapsedTime(&decompTime, decompStart, decompEnd));
+      ERRCHECK(cudaEventDestroy(decompStart));
+      ERRCHECK(cudaEventDestroy(decompEnd));
 
+      // Unpack data if necessary
       if (packed) {
+         ERRCHECK(cudaEventCreate(&unpackStart));
+         ERRCHECK(cudaEventCreate(&unpackEnd));
+         ERRCHECK(cudaEventRecord(unpackStart, stream));
+
          Unpack1<float, float><<<ceil(decompTotalSize / 256.), 256, 0, stream>>>(
             dUnpackOut, dDecompressed, dDecompSizes, nChunks, decompTotalSize);
          ERRCHECK(cudaPeekAtLastError());
          dDecompressed = dUnpackOut;
+
+         ERRCHECK(cudaEventRecord(unpackEnd, stream));
+         ERRCHECK(cudaEventSynchronize(unpackEnd));
+         ERRCHECK(cudaEventElapsedTime(&unpackTime, unpackStart, unpackEnd));
+         ERRCHECK(cudaEventDestroy(unpackStart));
+         ERRCHECK(cudaEventDestroy(unpackEnd));
       }
-      ERRCHECK(cudaEventRecord(decompEnd, stream));
-      ERRCHECK(cudaEventSynchronize(decompEnd));
-      ERRCHECK(cudaEventElapsedTime(&decompTime, decompStart, decompEnd));
 
       if (verbose) {
          CheckStatuses<<<1, 1, 0, stream>>>(dStatusPtrs, nChunks);
@@ -283,9 +295,6 @@ public:
       ERRCHECK(cudaFree(dDecompSizes));
       ERRCHECK(cudaFree(dTempBuf));
       ERRCHECK(cudaFree(dStatusPtrs));
-
-      ERRCHECK(cudaEventDestroy(decompStart));
-      ERRCHECK(cudaEventDestroy(decompEnd));
       ERRCHECK(cudaStreamDestroy(stream));
    }
 
@@ -319,6 +328,7 @@ public:
 
       result.decompTime = decompTime;
       result.setupTime = setupTime;
+      result.unpackTime = unpackTime;
       result.decompressed = hDecompressed;
 
       return result;
@@ -364,12 +374,14 @@ int main(int argc, char *argv[])
    }
 
    std::cout << "--------------------- INPUT INFORMATION ---------------------" << std::endl;
-   std::cout << "file name     : " << fileName.c_str() << std::endl;
-   std::cout << "compressed (B): " << totalSize << std::endl;
-   std::cout << "packed        : " << (packed ? "yes" : "no") << std::endl;
-   std::cout << "type          : " << type.c_str() << std::endl;
+   std::cout << "file name      : " << fileName.c_str() << std::endl;
+   std::cout << "type           : " << type.c_str() << std::endl;
+   std::cout << "compressed (B) : " << totalSize << std::endl;
+   std::cout << "repetitions    : " << repetitions << std::endl;
+   std::cout << "warmup         : " << warmUp << std::endl;
+   std::cout << "packed         : " << (packed ? "yes" : "no") << std::endl;
 
-   std::vector<float> setupTimes, decompTimes;
+   std::vector<float> setupTimes, decompTimes, unpackTimes;
    Result result;
    for (int i = 0; i < repetitions + warmUp; i++) {
       GPUDecompressor decompressor(files, totalSize, packed);
@@ -379,15 +391,16 @@ int main(int argc, char *argv[])
       if (i >= warmUp) {
          setupTimes.push_back(result.setupTime);
          decompTimes.push_back(result.decompTime);
+         unpackTimes.push_back(result.unpackTime);
       }
    }
 
    std::cout << "--------------------- OUTPUT INFORMATION ---------------------" << std::endl;
    std::cout << "decompressed (B): " << result.decompressed.size() << std::endl;
-   std::cout << "Avg setup (ms)\tStdDev\t\tAvg decomp (ms)\t\tStdDev\t\tRatio\t\tRepetitions\tWarmup" << std::endl;
-   std::cout << GetMean(setupTimes) << "\t" << GetStdDev(setupTimes) << "\t\t" << GetMean(decompTimes) << "\t\t"
-             << GetStdDev(decompTimes) << "\t\t" << result.decompressed.size() / (double)totalSize << "\t\t"
-             << repetitions << "\t\t" << warmUp << std::endl;
+   std::cout << "Ratio\t\tAvg setup (ms)\tStdDev\t\tAvg decomp (ms)\t\tStdDev\t\tAvg unpack (ms)\t\tStdDev" << std::endl;
+   std::cout << result.decompressed.size() / (double)totalSize << "\t\t" << GetMean(setupTimes) << "\t"
+             << GetStdDev(setupTimes) << "\t\t" << GetMean(decompTimes) << "\t\t" << GetStdDev(decompTimes) << "\t\t"
+             << GetMean(unpackTimes) << "\t" << GetStdDev(unpackTimes) << std::endl;
 
    if (!outputFile.empty()) {
       std::cout << "output file: " << outputFile.c_str() << std::endl;
