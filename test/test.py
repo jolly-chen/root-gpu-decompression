@@ -12,6 +12,7 @@ os.chdir("..")
 class TestSequence(unittest.TestCase):
     def setUp(self) -> None:
         self.n = 1
+        self.w = 1
 
         self.input_folder = "input/"
         self.output_folder = "output/"
@@ -23,12 +24,13 @@ class TestSequence(unittest.TestCase):
         input_file = f"{self.input_folder}/{f}"
         output_file = f"{self.output_folder}/{f}.out"
         expected = f"{self.input_folder}/{f.removesuffix(f'.root.{method}')}.in"
-        CMD = f"./cpu_root_decomp -n {self.n} -f {input_file} -o {output_file} -s {f.split('.')[1]} -c 1"
+        CMD = f"./cpu_root_decomp -n {self.n} -w {self.w} -f {input_file} -o {output_file} -s {f.split('.')[1]} -c 1"
         if "pack" in f:
             CMD += " -p"
 
-        print(CMD)
-        subprocess.run([*CMD.split()])
+        print(f"\n{CMD}")
+        result = subprocess.run([*CMD.split()], stdout=subprocess.DEVNULL)
+        self.assertEqual(result.stderr, None)
         result = subprocess.run(["diff", f"{expected}", f"{output_file}"])
         self.assertEqual(result.returncode, 0)
 
@@ -38,12 +40,13 @@ class TestSequence(unittest.TestCase):
         input_file = f"{self.input_folder}/{f}"
         output_file = f"{self.output_folder}/{f}.out"
         expected = f"{self.input_folder}/{f.removesuffix(f'.root.{method}')}.in"
-        CMD = f"./gpu_root_decomp -n 1 -f {input_file} -o {output_file} -t {method}"
+        CMD = f"./gpu_root_decomp -n {self.n} -w {self.w} -f {input_file} -o {output_file} -t {method}"
         if "pack" in f:
             CMD += " -p"
 
-        print(CMD)
-        subprocess.run([*CMD.split()])
+        print(f"\n{CMD}")
+        result = subprocess.run([*CMD.split()], stdout=subprocess.DEVNULL)
+        self.assertEqual(result.stderr, None)
         result = subprocess.run(["diff", f"{expected}", f"{output_file}"])
         self.assertEqual(result.returncode, 0)
 
@@ -59,12 +62,13 @@ class TestSequence(unittest.TestCase):
             with open("tmp", "wb") as ft:
                 ft.write(fe.read() * m)
 
-        CMD = f"./cpu_root_decomp -n {self.n} -f {input_file} -o {output_file} -s {f.split('.')[1]} -m {m}"
+        CMD = f"./cpu_root_decomp -n {self.n} -w {self.w} -f {input_file} -o {output_file} -s {f.split('.')[1]} -m {m}"
         if "pack" in f:
             CMD += " -p"
 
-        print(CMD)
-        subprocess.run([*CMD.split()])
+        print(f"\n{CMD}")
+        result = subprocess.run([*CMD.split()], stdout=subprocess.DEVNULL)
+        self.assertEqual(result.stderr, None)
         result = subprocess.run(["diff", "tmp", f"{output_file}"])
         self.assertEqual(result.returncode, 0)
         result = subprocess.run(["rm", "tmp"])
@@ -81,12 +85,13 @@ class TestSequence(unittest.TestCase):
             with open("tmp", "wb") as ft:
                 ft.write(fe.read() * m)
 
-        CMD = f"./gpu_root_decomp -n 1 -f {input_file} -o {output_file} -t {method} -m {m}"
+        CMD = f"./gpu_root_decomp -n {self.n} -w {self.w} -f {input_file} -o {output_file} -t {method} -m {m}"
         if "pack" in f:
             CMD += " -p"
 
-        print(CMD)
-        subprocess.run([*CMD.split()])
+        print(f"\n{CMD}")
+        result = subprocess.run([*CMD.split()], stdout=subprocess.DEVNULL)
+        self.assertEqual(result.stderr, None)
         result = subprocess.run(["diff", "tmp", f"{output_file}"])
         self.assertEqual(result.returncode, 0)
         result = subprocess.run(["rm", "tmp"])

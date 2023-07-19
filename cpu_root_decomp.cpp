@@ -30,7 +30,7 @@ struct result_t {
 };
 
 void Decompress(const int tid, const int nThreads, const std::vector<std::vector<char>> &data, result_t *result,
-                const int decompSize, std::atomic<bool> &startRunning)
+                const int decompSize, std::atomic<bool> &startRunning, bool pack)
 {
    while (!startRunning) {
    }
@@ -38,7 +38,14 @@ void Decompress(const int tid, const int nThreads, const std::vector<std::vector
    // Distribute files round-robin
    for (int i = tid; i < data.size(); i += nThreads) {
       RNTupleDecompressor decompressor;
-      decompressor.Unzip(data[i].data(), data[i].size(), decompSize, &result->data[i * decompSize]);
+
+      if (pack) {
+         std::vector<char> tmp(decompSize);
+         decompressor.Unzip(data[i].data(), data[i].size(), decompSize, tmp.data());
+         CastSplitUnpack<float, float>(&result->data[i * decompSize], tmp.data(), tmp.size() / 4);
+      } else {
+         decompressor.Unzip(data[i].data(), data[i].size(), decompSize, &result->data[i * decompSize]);
+      }
    }
 }
 
@@ -50,9 +57,10 @@ int main(int argc, char *argv[])
    int multiFileSize = 1;
    int nThreads = std::max(1, (int)std::thread::hardware_concurrency());
    int warmUp = 10;
+   bool pack = false;
 
    int c;
-   while ((c = getopt(argc, argv, "f:o:dvs:n:m:c:w:")) != -1) {
+   while ((c = getopt(argc, argv, "f:o:dvs:n:m:c:w:p")) != -1) {
       switch (c) {
       case 'f': fileName = optarg; break;
       case 'o': outputFile = optarg; break;
@@ -62,6 +70,7 @@ int main(int argc, char *argv[])
       case 'n': repetitions = atoi(optarg); break;
       case 'c': nThreads = atoi(optarg); break;
       case 'w': warmUp = atoi(optarg); break;
+      case 'p': pack = true; break;
       default: std::cout << "Ignoring unknown parse returns: " << char(c) << std::endl;
       }
    }
@@ -80,6 +89,7 @@ int main(int argc, char *argv[])
    std::cout << "--------------------- INPUT INFORMATION ---------------------" << std::endl;
    std::cout << "file name       : " << fileName.c_str() << std::endl;
    std::cout << "compressed (B)  : " << compTotalSize << std::endl;
+   std::cout << "packed          : " << (pack ? "yes" : "no") << std::endl;
    std::cout << "repetitions     : " << repetitions << std::endl;
    std::cout << "warmup          : " << warmUp << std::endl;
    std::cout << "threads         : " << nThreads << std::endl;
@@ -91,7 +101,7 @@ int main(int argc, char *argv[])
       std::atomic<bool> startRunning(false);
       for (int t = 0; t < nThreads; t++) {
          threadPool[t] =
-            std::thread(Decompress, t, nThreads, std::ref(files), &result, decompSize, std::ref(startRunning));
+            std::thread(Decompress, t, nThreads, std::ref(files), &result, decompSize, std::ref(startRunning), pack);
       }
 
       auto start = Clock::now();
