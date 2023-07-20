@@ -110,8 +110,8 @@ int main(int argc, char *argv[])
             std::thread(Decompress, t, nThreads, std::ref(files), &result, decompSize, std::ref(startRunning));
       }
 
-      auto startDecomp = Clock::now();
       startRunning.store(true);
+      auto startDecomp = Clock::now();
       for (int t = 0; t < nThreads; t++) {
          threadPool[t].join();
       }
@@ -126,8 +126,8 @@ int main(int argc, char *argv[])
                std::thread(Unpack, t, nThreads, std::ref(files), &result, decompSize, std::ref(startRunning));
          }
 
-         startUnpack = Clock::now();
          startRunning.store(true);
+         startUnpack = Clock::now();
          for (int t = 0; t < nThreads; t++) {
             threadPool[t].join();
          }
