@@ -30,6 +30,7 @@ find_package(ROOT REQUIRED COMPONENTS Core)
 
 add_executable("${PROJECT_NAME}" "${ROOT_DECOMP_SRC_FILES}")
 target_link_libraries("${PROJECT_NAME}" PRIVATE nvcomp::nvcomp ROOT::Core)
+target_compile_options("${PROJECT_NAME}" PRIVATE)
 
 ##############################################
 # ROOT CPU decompression of ROOT compressed files #
@@ -42,5 +43,22 @@ find_package(ROOT REQUIRED COMPONENTS ROOTNTuple)
 
 add_executable("${PROJECT_NAME}" "${ROOT_DECOMP_SRC_FILES}")
 target_link_libraries("${PROJECT_NAME}" PRIVATE ROOT::ROOTNTuple)
+
+
+
+##############################################
+# ROOT CPU decompression of ROOT compressed files parallelised with openmp #
+##############################################
+
+set(ROOT_DECOMP2_SRC_FILES "cpu_root_decomp_omp.cpp")
+project(cpu_root_decomp_omp  LANGUAGES C CXX)
+
+find_package(ROOT REQUIRED COMPONENTS ROOTNTuple)
+find_package(OpenMP REQUIRED)
+
+add_executable("${PROJECT_NAME}" "${ROOT_DECOMP2_SRC_FILES}")
+target_link_libraries("${PROJECT_NAME}" PRIVATE ROOT::ROOTNTuple OpenMP::OpenMP_CXX)
+
+##############################################
 
 add_subdirectory(input)
