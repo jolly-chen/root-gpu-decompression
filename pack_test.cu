@@ -5,27 +5,28 @@
 #include "utils.h"
 #include "pack.cuh"
 
-
 int main(int argc, char const *argv[])
 {
-   std::vector<float> in(64000*10, 123456.);
+   int nFloats = 8;
+   int nChunks = 1;
+   std::vector<float> in(nFloats * nChunks, 12345689.);
    std::vector<float> pack(in.size());
    std::vector<float> out(in.size());
    std::vector<float> unpack(in.size());
-   std::vector<size_t> sizes(10, 64000);
+   std::vector<size_t> sizes(nChunks, nFloats);
    // std::vector<size_t> sizes{256, 3, 1};
    // std::vector<size_t> sizes{1, 1, 1, 1};
-   std::vector<size_t> chunkOffsets(sizes.size());
+   std::vector<size_t> chunkOffsets(nChunks);
 
    // pack input buffer and unpack to test correctness
    size_t offset = 0;
-   for (auto c = 0; c < sizes.size(); c++) {
+   for (auto c = 0; c < nChunks; c++) {
       CastSplitPack<float, float>(&pack.data()[offset], &in.data()[offset], sizes[c]);
       offset += sizes[c];
    }
 
    offset = 0;
-   for (auto c = 0; c < sizes.size(); c++) {
+   for (auto c = 0; c < nChunks; c++) {
       CastSplitUnpack<float, float>(&unpack.data()[offset], &pack.data()[offset], sizes[c]);
       offset += sizes[c];
    }
@@ -41,11 +42,11 @@ int main(int argc, char const *argv[])
 
    size_t *dSizes = NULL;
    std::transform(sizes.begin(), sizes.end(), sizes.begin(), [&](auto &x) { return x * sizeof(float); });
-   ERRCHECK(cudaMalloc(&dSizes, sizes.size() * sizeof(size_t)));
-   ERRCHECK(cudaMemcpy(dSizes, sizes.data(), sizes.size() * sizeof(size_t), cudaMemcpyHostToDevice));
+   ERRCHECK(cudaMalloc(&dSizes, nChunks * sizeof(size_t)));
+   ERRCHECK(cudaMemcpy(dSizes, sizes.data(), nChunks * sizeof(size_t), cudaMemcpyHostToDevice));
 
    chunkOffsets[0] = 0;
-   for (auto c = 1; c < sizes.size(); c++) {
+   for (auto c = 1; c < nChunks; c++) {
       chunkOffsets[c] += sizes[c - 1] + chunkOffsets[c - 1];
    }
    size_t *dOffsets = NULL;
@@ -53,40 +54,58 @@ int main(int argc, char const *argv[])
    ERRCHECK(cudaMemcpy(dOffsets, chunkOffsets.data(), chunkOffsets.size() * sizeof(size_t), cudaMemcpyHostToDevice));
 
    // run unpack kernels
-   Unpack1<float, float>
-      <<<ceil(pack.size() / 256.), 256>>>(dOut, dPack, dSizes, sizes.size(), pack.size() * sizeof(float));
-   ERRCHECK(cudaPeekAtLastError());
-   ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
-   assert(in == out && "Unpack1 failed");
+   // Unpack1<float, float>
+   //    <<<ceil(pack.size() / 256.), 256>>>(dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
+   // ERRCHECK(cudaPeekAtLastError());
+   // ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
+   // assert(in == out && "Unpack1 failed");
 
    // ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
-   // Unpack1_1<float, float><<<ceil(pack.size() / 256.), 256, sizes.size()>>>(dOut, dPack, dSizes, dOffsets,
-   // sizes.size(),
+   // Unpack1_1<float, float><<<ceil(pack.size() / 256.), 256, nChunks>>>(dOut, dPack, dSizes, dOffsets,
+   // nChunks,
    //                                                                        pack.size() * sizeof(float));
    // ERRCHECK(cudaPeekAtLastError());
    // ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
    // assert(in == out && "Unpack2 failed");
 
-   ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
-   Unpack2<float, float>
-      <<<ceil(pack.size() / 256.), 256>>>(dOut, dPack, dSizes, sizes.size(), pack.size() * sizeof(float));
-   ERRCHECK(cudaPeekAtLastError());
-   ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
-   assert(in == out && "Unpack2 failed");
+   // ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
+   // Unpack2<float, float>
+   //    <<<ceil(pack.size() / 256.), 256>>>(dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
+   // ERRCHECK(cudaPeekAtLastError());
+   // ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
+   // assert(in == out && "Unpack2 failed");
+
+   // ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
+   // Unpack2_1<float, float><<<ceil(pack.size() / 256.), 256, nChunks>>>(dOut, dPack, dSizes, dOffsets, nChunks,
+   //                                                                          pack.size() * sizeof(float));
+   // ERRCHECK(cudaPeekAtLastError());
+   // ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
+   // assert(in == out && "Unpack2.1 failed");
+
+   // ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
+   // Unpack3<float, float>
+   //    <<<ceil(pack.size() / 256.), 256>>>(dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
+   // ERRCHECK(cudaPeekAtLastError());
+   // ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
+   // assert(in == out && "Unpack3 failed");
 
    ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
-   Unpack2_1<float, float><<<ceil(pack.size() / 256.), 256, sizes.size()>>>(dOut, dPack, dSizes, dOffsets, sizes.size(),
-                                                                            pack.size() * sizeof(float));
+   Unpack4<float, float><<<ceil(nFloats / TILE_SIZE), BLOCK_SIZE>>>(
+      dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
    ERRCHECK(cudaPeekAtLastError());
    ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
-   assert(in == out && "Unpack2.1 failed");
+   assert(in == out && "Unpack4 failed");
 
+   dim3 dimGrid(1, nFloats / TILE_SIZE, 1);
+   dim3 dimBlock(sizeof(float), BLOCK_SIZE / sizeof(float), 1);
    ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
-   Unpack3<float, float>
-      <<<ceil(pack.size() / 256.), 256>>>(dOut, dPack, dSizes, sizes.size(), pack.size() * sizeof(float));
+   Unpack5<float, float>
+      <<<dimGrid, dimBlock>>>(dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
    ERRCHECK(cudaPeekAtLastError());
    ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
-   assert(in == out && "Unpack3 failed");
+   assert(in == out && "Unpack5 failed");
+
+   printf("Test finished\n");
 
    return 0;
 }

@@ -1,6 +1,10 @@
 #include <thrust/binary_search.h>
 #include <thrust/functional.h>
 
+// Number of bytes
+#define TILE_SIZE 8
+#define BLOCK_SIZE 32
+
 /**
  * Unpacking on GPU
  */
@@ -188,7 +192,8 @@ __global__ void Unpack2_1(void *destination, const void *source, const size_t *c
       size_t chunkByte = b - chunkBeginIdx;
       size_t nFloat = chunkByte % nElem;
       size_t nFloatByte = chunkByte / nElem;
-      // printf("tid: %li totalsize: %li chunk: %li begin: %li nElem: %li chunkByte: %li nFloat: %li nFloatByte %li\n", b,
+      // printf("tid: %li totalsize: %li chunk: %li begin: %li nElem: %li chunkByte: %li nFloat: %li nFloatByte %li\n",
+      // b,
       //        totalSize, chunk, chunkBeginIdx, nElem, chunkByte, nFloat, nFloatByte);
       dst[chunkBeginIdx + nFloat * N + nFloatByte] = src[chunkBeginIdx + chunkByte];
    }
@@ -196,7 +201,7 @@ __global__ void Unpack2_1(void *destination, const void *source, const size_t *c
 
 ///
 /// VERSION 3
-/// Every thread assigns the retrieves the current dest byte from the correct source byte per chunk
+/// Every thread retrieves the current dest byte from the correct source byte per chunk
 ///
 
 /**
@@ -232,5 +237,95 @@ Unpack3(void *destination, const void *source, const size_t *chunkSizes, const s
       }
 
       chunkBeginIdx += chunkSizes[c];
+   }
+}
+
+///
+/// VERSION 4
+/// Every thread retrieves the current dest byte from the correct source byte per chunk, per TILE
+///
+
+/**
+ * @brief
+ *
+ * @tparam DestT
+ * @tparam SourceT
+ * @param dest output buffer
+ * @param src input buffer
+ * @param chunkSizes size of each chunk in src
+ * @param totalSize total size of src in bytes
+ * @return void
+ */
+template <typename DestT, typename SourceT>
+__global__ void
+Unpack4(void *destination, const void *source, const size_t *chunkSizes, const size_t nChunks, const size_t totalSize)
+{
+   constexpr size_t N = sizeof(SourceT);
+   __shared__ char tile[TILE_SIZE * N];
+
+   unsigned int x = threadIdx.x + TILE_SIZE * N * blockIdx.x;
+
+   auto dst = reinterpret_cast<char *>(destination);
+   auto src = reinterpret_cast<const char *>(source);
+   size_t chunkBeginIdx = 0;
+
+   for (auto chunk = 0; chunk < nChunks; chunk++) {
+      size_t nElem = chunkSizes[chunk] / N;
+
+      for (int offset = 0; offset < TILE_SIZE * N; offset += BLOCK_SIZE) {
+         tile[x + offset] = src[chunkBeginIdx + x + offset];
+      }
+
+      __syncthreads();
+
+      for (int offset = 0; offset < TILE_SIZE * N; offset += BLOCK_SIZE) {
+         int elem = (x + offset) / N;
+         int byte = x % N;
+         // dst[chunkBeginIdx + x + offset] = src[chunkBeginIdx + nFloat * nElem + nFloatByte];
+         dst[chunkBeginIdx + x + offset] = tile[byte * nElem + elem];
+      }
+
+      chunkBeginIdx += chunkSizes[chunk];
+   }
+}
+
+/**
+ * @brief
+ *
+ * @tparam DestT
+ * @tparam SourceT
+ * @param dest output buffer
+ * @param src input buffer
+ * @param chunkSizes size of each chunk in src
+ * @param totalSize total size of src in bytes
+ * @return void
+ */
+template <typename DestT, typename SourceT>
+__global__ void
+Unpack5(void *destination, const void *source, const size_t *chunkSizes, const size_t nChunks, const size_t totalSize)
+{
+   constexpr size_t N = sizeof(SourceT);
+   // __shared__ char tile[TILE_SIZE][N];
+   __shared__ char tile[TILE_SIZE * N];
+
+   unsigned int byte = threadIdx.x;
+   unsigned int elem = blockIdx.y * N + threadIdx.y;
+
+   auto dst = reinterpret_cast<char *>(destination);
+   auto src = reinterpret_cast<const char *>(source);
+   size_t chunkBeginIdx = 0;
+
+   for (auto chunk = 0; chunk < nChunks; chunk++) {
+      for (int offset = 0; offset < TILE_SIZE * N; offset += BLOCK_SIZE)
+         tile[(threadIdx.y + offset) * N + byte] = src[chunkBeginIdx + (elem + offset) * N + byte];
+
+      __syncthreads();
+
+      size_t nElem = chunkSizes[chunk] / N;
+      for (int offset = 0; offset < TILE_SIZE * N; offset += BLOCK_SIZE) {
+         dst[chunkBeginIdx + (elem + offset) * N + byte] = tile[byte * nElem + (elem + offset)];
+      }
+
+      chunkBeginIdx += chunkSizes[chunk];
    }
 }
