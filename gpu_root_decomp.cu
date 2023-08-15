@@ -78,7 +78,7 @@ class GPUDecompressor {
 private:
    cudaStream_t stream;
    size_t nChunks;
-   size_t compTotalSize, decompTotalSize;
+   size_t compTotalSize, decompTotalSize, decompMaxSize;
    bool packed;
 
    // Host buffers
@@ -128,7 +128,7 @@ private:
       auto configureStart = Clock::now();
 
       decompTotalSize = 0;
-      int maxUncompressedChunkSize = 0;
+      decompMaxSize = 0;
       for (int i = 0; i < hCompressed.size(); i++) {
          size_t remainder = hCompressed[i].size();
          auto source = const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(hCompressed[i].data()));
@@ -148,8 +148,8 @@ private:
             hDecompSizes.push_back(szTarget);
 
             decompTotalSize += szTarget;
-            if (szTarget > maxUncompressedChunkSize)
-               maxUncompressedChunkSize = szTarget;
+            if (szTarget > decompMaxSize)
+               decompMaxSize = szTarget;
 
             // Move to next chunk
             source += szSource;
@@ -196,7 +196,7 @@ private:
 
       // Allocate temp space
       nvcompStatus_t status =
-         nvcompGetDecompressTempSize(nChunks, maxUncompressedChunkSize, &tempBufSize, decompTotalSize);
+         nvcompGetDecompressTempSize(nChunks, decompMaxSize, &tempBufSize, decompTotalSize);
       if (status != nvcompSuccess) {
          throw std::runtime_error("nvcompBatched*DecompressGetTempSize() failed.");
       }
@@ -254,7 +254,7 @@ private:
          ERRCHECK(cudaEventCreate(&unpackEnd));
          ERRCHECK(cudaEventRecord(unpackStart, stream));
 
-         Unpack1<float, float><<<ceil(decompTotalSize / 256.), 256, 0, stream>>>(
+         Unpack4_1<float, float><<<ceil((decompMaxSize / sizeof(float)) / TILE_SIZE), TILE_SIZE, 0, stream>>>(
             dUnpackOut, dDecompressed, dDecompSizes, nChunks, decompTotalSize);
          ERRCHECK(cudaPeekAtLastError());
          dDecompressed = dUnpackOut;

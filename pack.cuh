@@ -2,7 +2,7 @@
 #include <thrust/functional.h>
 
 // Number of elem
-#define TILE_SIZE 512
+#define TILE_SIZE 256
 
 // Number of bytes
 #define BLOCK_SIZE 32
@@ -245,6 +245,7 @@ Unpack3(void *destination, const void *source, const size_t *chunkSizes, const s
 ///
 /// TODO: VERSION 4
 /// Every thread retrieves the current dest byte from the correct source byte per chunk, per TILE
+/// Splits the src array into tiles along the elements AND bytes
 ///
 
 /**
@@ -336,7 +337,7 @@ Unpack4_1(void *destination, const void *source, const size_t *chunkSizes, const
 }
 
 /**
- * @brief TODO:
+ * @brief TODO: 2D blocks
  *
  * @tparam DestT
  * @tparam SourceT
@@ -374,49 +375,6 @@ Unpack5(void *destination, const void *source, const size_t *chunkSizes, const s
       for (int offset = 0; offset < TILE_SIZE * N; offset += BLOCK_SIZE) {
          dst[chunkBeginIdx + (elem + offset) * N + byte] = tile[byte * nElem + (elem + offset)];
       }
-
-      chunkBeginIdx += chunkSizes[chunk];
-   }
-}
-
-/**
- * @brief TODO:
- *
- * @tparam DestT
- * @tparam SourceT
- * @param dest output buffer
- * @param src input buffer
- * @param chunkSizes size of each chunk in src
- * @param totalSize total size of src in bytes
- * @return void
- */
-template <typename DestT, typename SourceT>
-__global__ void
-Unpack6(void *destination, const void *source, const size_t *chunkSizes, const size_t nChunks, const size_t totalSize)
-{
-   constexpr size_t N = sizeof(SourceT);
-   // __shared__ char tile[TILE_SIZE][N];
-   __shared__ char tile[TILE_SIZE * N];
-
-   auto dst = reinterpret_cast<char *>(destination);
-   auto src = reinterpret_cast<const char *>(source);
-   size_t chunkBeginIdx = 0;
-
-   for (auto chunk = 0; chunk < nChunks; chunk++) {
-      size_t nElem = chunkSizes[chunk] / N;
-      unsigned int elem = blockIdx.x * TILE_SIZE + threadIdx.x;
-
-      printf("y: %u block: %u x: %u tid: %lu elem: %d byte: %d\n", threadIdx.y, blockIdx.x, threadIdx.x,
-             threadIdx.y * nElem + blockIdx.x * blockDim.x + threadIdx.x, elem, blockIdx.y);
-
-      for (int byte = 0; byte < N; byte++)
-         tile[byte * TILE_SIZE + threadIdx.x] = src[chunkBeginIdx + byte * nElem + elem];
-
-      __syncthreads();
-
-      // unsigned int elem =
-      // for (int byte = 0; byte < N; byte++)
-      //    dst[chunkBeginIdx + elem * N + byte] = tile[byte * nElem + (elem + offset)];
 
       chunkBeginIdx += chunkSizes[chunk];
    }

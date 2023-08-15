@@ -112,15 +112,6 @@ int main(int argc, char const *argv[])
    // ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
    // assert(in == out && "Unpack5 failed");
 
-   // dim3 dimGrid(nFloats / TILE_SIZE, 1, 1);
-   // dim3 dimBlock(BLOCK_SIZE, 1, 1);
-   // ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
-   // Unpack6<float, float>
-   //    <<<dimGrid, dimBlock>>>(dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
-   // ERRCHECK(cudaPeekAtLastError());
-   // ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
-   // assert(in == out && "Unpack5 failed");
-
    printf("Test finished\n");
 
    return 0;
