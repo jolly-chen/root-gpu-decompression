@@ -35,10 +35,10 @@ struct result_t {
 };
 
 void Decompress(const int tid, const int nThreads, std::vector<std::vector<char>> &data, result_t *result,
-                const int decompSize, std::atomic<int> &running)
+                const int decompSize, std::atomic<int> &running, std::atomic<int> &completed)
 {
-   running++;
    RNTupleDecompressor decompressor;
+   running++;
    while (running != nThreads);
 
    // Distribute files round-robin
@@ -47,21 +47,21 @@ void Decompress(const int tid, const int nThreads, std::vector<std::vector<char>
                          &result->decompressed[i * (decompSize + result->padding)]);
    }
 
-   running--;
+   completed++;
 }
 
 void Unpack(const int tid, const int nThreads, const std::vector<std::vector<char>> &data, result_t *result,
-            const int decompSize, std::atomic<int> &running)
+            const int decompSize, std::atomic<int> &running, std::atomic<int> &completed)
 {
    running++;
    while (running != nThreads);
 
    for (int i = tid; i < data.size(); i += nThreads) {
-      CastSplitUnpack<float, float>(&result->unpacked[i * (decompSize + result->padding)],
-                                    &result->decompressed[i * (decompSize + result->padding)],
+      CastSplitUnpack<float, float>(&result->unpacked[0 * (decompSize + result->padding)],
+                                    &result->decompressed[0 * (decompSize + result->padding)],
                                     decompSize / sizeof(float));
    }
-   running--;
+   completed++;
 }
 
 int main(int argc, char *argv[])
@@ -114,14 +114,15 @@ int main(int argc, char *argv[])
    result_t result(decompSize * multiFileSize, nThreads);
    for (int i = 0; i < repetitions + warmUp; i++) {
       // Decompression
-      std::atomic<int> running(0);
+      std::atomic<int> running(0), completed(0);
       for (int t = 0; t < nThreads; t++) {
-         threadPool[t] = std::thread(Decompress, t, nThreads, std::ref(files), &result, decompSize, std::ref(running));
+         threadPool[t] = std::thread(Decompress, t, nThreads, std::ref(files), &result, decompSize, std::ref(running),
+                                     std::ref(completed));
       }
 
       while (running != nThreads);
       auto startDecomp = Clock::now();
-      while (running != 0);
+      while (completed != nThreads);
       auto endDecomp = Clock::now();
       for (int t = 0; t < nThreads; t++) {
          threadPool[t].join();
@@ -134,13 +135,16 @@ int main(int argc, char *argv[])
 
       // Unpacking
       if (packed) {
+         running.store(0);
+         completed.store(0);
          for (int t = 0; t < nThreads; t++) {
-            threadPool[t] = std::thread(Unpack, t, nThreads, std::ref(files), &result, decompSize, std::ref(running));
+            threadPool[t] = std::thread(Unpack, t, nThreads, std::ref(files), &result, decompSize, std::ref(running),
+                                        std::ref(completed));
          }
 
          while (running != nThreads);
          auto startUnpack = Clock::now();
-         while (running != 0);
+         while (completed != nThreads);
          auto endUnpack = Clock::now();
          for (int t = 0; t < nThreads; t++) {
             threadPool[t].join();
