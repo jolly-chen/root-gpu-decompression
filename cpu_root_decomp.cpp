@@ -57,8 +57,8 @@ void Unpack(const int tid, const int nThreads, const std::vector<std::vector<cha
    while (running != nThreads);
 
    for (int i = tid; i < data.size(); i += nThreads) {
-      CastSplitUnpack<float, float>(&result->unpacked[0 * (decompSize + result->padding)],
-                                    &result->decompressed[0 * (decompSize + result->padding)],
+      CastSplitUnpack<float, float>(&result->unpacked[i * (decompSize + result->padding)],
+                                    &result->decompressed[i * (decompSize + result->padding)],
                                     decompSize / sizeof(float));
    }
    completed++;

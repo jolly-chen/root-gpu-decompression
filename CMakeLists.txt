@@ -60,5 +60,14 @@ add_executable("${PROJECT_NAME}" "${ROOT_DECOMP2_SRC_FILES}")
 target_link_libraries("${PROJECT_NAME}" PRIVATE ROOT::ROOTNTuple OpenMP::OpenMP_CXX)
 
 ##############################################
+# Tests for GPU packing
+##############################################
+
+project(pack_test LANGUAGES CUDA)
+
+add_executable("${PROJECT_NAME}" pack_test.cu)
+
+##############################################
+
 
 add_subdirectory(input)

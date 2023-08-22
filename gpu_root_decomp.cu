@@ -120,13 +120,8 @@ private:
       return ptrs;
    }
 
-   // Allocate and setup various host/device buffers for decompressing the input data.
-   template <typename GetDecompressSizeFunc, typename GetTempSizeFunc>
-   void Configure(GetDecompressSizeFunc nvcompGetDecompressSize, GetTempSizeFunc nvcompGetDecompressTempSize)
+   inline void ParseHeaders()
    {
-      // For measuring setup time
-      auto configureStart = Clock::now();
-
       decompTotalSize = 0;
       decompMaxSize = 0;
       for (int i = 0; i < hCompressed.size(); i++) {
@@ -159,7 +154,11 @@ private:
       }
 
       hDecompressed.resize(decompTotalSize);
+   }
 
+   template <typename GetDecompressSizeFunc, typename GetTempSizeFunc>
+   inline void SetupDeviceMemory(GetDecompressSizeFunc nvcompGetDecompressSize, GetTempSizeFunc nvcompGetDecompressTempSize)
+   {
       // Set up buffers for the compressed and decompressed data on the device.
       ERRCHECK(cudaMallocAsync(&dCompressed, compTotalSize * sizeof(char), stream));
       int offset = 0;
@@ -195,8 +194,7 @@ private:
                                cudaMemcpyHostToDevice, stream));
 
       // Allocate temp space
-      nvcompStatus_t status =
-         nvcompGetDecompressTempSize(nChunks, decompMaxSize, &tempBufSize, decompTotalSize);
+      nvcompStatus_t status = nvcompGetDecompressTempSize(nChunks, decompMaxSize, &tempBufSize, decompTotalSize);
       if (status != nvcompSuccess) {
          throw std::runtime_error("nvcompBatched*DecompressGetTempSize() failed.");
       }
@@ -208,6 +206,18 @@ private:
       if (packed) {
          ERRCHECK(cudaMallocAsync(&dUnpackOut, decompTotalSize * sizeof(size_t), stream));
       }
+   }
+
+   // Allocate and setup various host/device buffers for decompressing the input data.
+   template <typename GetDecompressSizeFunc, typename GetTempSizeFunc>
+   void Configure(GetDecompressSizeFunc nvcompGetDecompressSize, GetTempSizeFunc nvcompGetDecompressTempSize)
+   {
+      // For measuring setup time
+      ERRCHECK(cudaDeviceSynchronize());
+      auto configureStart = Clock::now();
+
+      ParseHeaders();
+      SetupDeviceMemory(nvcompGetDecompressSize, nvcompGetDecompressTempSize);
 
       ERRCHECK(cudaDeviceSynchronize());
       setupTime = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - configureStart).count() / 1e6;
@@ -254,7 +264,7 @@ private:
          ERRCHECK(cudaEventCreate(&unpackEnd));
          ERRCHECK(cudaEventRecord(unpackStart, stream));
 
-         Unpack4_1<float, float><<<ceil((decompMaxSize / sizeof(float)) / TILE_SIZE), TILE_SIZE, 0, stream>>>(
+         Unpack4_1<float, float><<<ceil(float(decompMaxSize / sizeof(float)) / TILE_SIZE), TILE_SIZE, 0, stream>>>(
             dUnpackOut, dDecompressed, dDecompSizes, nChunks, decompTotalSize);
          ERRCHECK(cudaPeekAtLastError());
          dDecompressed = dUnpackOut;
@@ -397,7 +407,8 @@ int main(int argc, char *argv[])
 
    std::cout << "--------------------- OUTPUT INFORMATION ---------------------" << std::endl;
    std::cout << "decompressed (B): " << result.decompressed.size() << std::endl;
-   std::cout << "Ratio\t\tAvg setup (ms)\tStdDev\t\tAvg decomp (ms)\t\tStdDev\t\tAvg unpack (ms)\t\tStdDev" << std::endl;
+   std::cout << "Ratio\t\tAvg setup (ms)\tStdDev\t\tAvg decomp (ms)\t\tStdDev\t\tAvg unpack (ms)\t\tStdDev"
+             << std::endl;
    std::cout << result.decompressed.size() / (double)totalSize << "\t\t" << GetMean(setupTimes) << "\t"
              << GetStdDev(setupTimes) << "\t\t" << GetMean(decompTimes) << "\t\t" << GetStdDev(decompTimes) << "\t\t"
              << GetMean(unpackTimes) << "\t" << GetStdDev(unpackTimes) << std::endl;

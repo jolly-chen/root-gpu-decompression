@@ -1,15 +1,29 @@
 #include <vector>
 #include <iostream>
 #include <cassert>
+#include <random>
+#include <algorithm>
+#include <iterator>
 
 #include "utils.h"
 #include "pack.cuh"
 
+std::vector<float> get_random_floats(size_t size)
+{
+   std::default_random_engine generator(123);
+   std::uniform_int_distribution<int> dist{-1234567, 1234567};
+   auto gen = [&]() { return dist(generator); };
+
+   std::vector<float> vec(size);
+   std::generate(std::begin(vec), std::end(vec), gen);
+   return vec;
+}
+
 int main(int argc, char const *argv[])
 {
-   int nFloats = 64000;
-   int nChunks = 10;
-   std::vector<float> in(nFloats * nChunks, 12345689.);
+   int nFloats = 16;
+   int nChunks = 100;
+   auto in = get_random_floats(nFloats * nChunks);
    std::vector<float> pack(in.size());
    std::vector<float> out(in.size());
    std::vector<float> unpack(in.size());
@@ -60,20 +74,20 @@ int main(int argc, char const *argv[])
    ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
    assert(in == out && "Unpack1 failed");
 
-   // ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
-   // Unpack1_1<float, float><<<ceil(pack.size() / 256.), 256, nChunks>>>(dOut, dPack, dSizes, dOffsets,
-   // nChunks,
-   //                                                                        pack.size() * sizeof(float));
-   // ERRCHECK(cudaPeekAtLastError());
-   // ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
-   // assert(in == out && "Unpack2 failed");
+   ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
+   Unpack1_1<float, float><<<ceil(pack.size() / 256.), 256, nChunks>>>(dOut, dPack, dSizes, dOffsets,
+   nChunks,
+                                                                          pack.size() * sizeof(float));
+   ERRCHECK(cudaPeekAtLastError());
+   ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
+   assert(in == out && "Unpack2 failed");
 
-   // ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
-   // Unpack2<float, float>
-   //    <<<ceil(pack.size() / 256.), 256>>>(dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
-   // ERRCHECK(cudaPeekAtLastError());
-   // ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
-   // assert(in == out && "Unpack2 failed");
+   ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
+   Unpack2<float, float>
+      <<<ceil(pack.size() / 256.), 256>>>(dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
+   ERRCHECK(cudaPeekAtLastError());
+   ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
+   assert(in == out && "Unpack2 failed");
 
    // ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
    // Unpack2_1<float, float><<<ceil(pack.size() / 256.), 256, nChunks>>>(dOut, dPack, dSizes, dOffsets, nChunks,
@@ -82,12 +96,12 @@ int main(int argc, char const *argv[])
    // ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
    // assert(in == out && "Unpack2.1 failed");
 
-   // ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
-   // Unpack3<float, float>
-   //    <<<ceil(pack.size() / 256.), 256>>>(dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
-   // ERRCHECK(cudaPeekAtLastError());
-   // ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
-   // assert(in == out && "Unpack3 failed");
+   ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
+   Unpack3<float, float>
+      <<<ceil(pack.size() / 256.), 256>>>(dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
+   ERRCHECK(cudaPeekAtLastError());
+   ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
+   assert(in == out && "Unpack3 failed");
 
    // ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
    // Unpack4<float, float><<<ceil(nFloats / TILE_SIZE), BLOCK_SIZE>>>(
@@ -98,7 +112,7 @@ int main(int argc, char const *argv[])
 
    ERRCHECK(cudaMemset(dOut, 0, out.size() * sizeof(float)));
    Unpack4_1<float, float>
-      <<<ceil(nFloats / TILE_SIZE), TILE_SIZE>>>(dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
+      <<<ceil(float(nFloats) / TILE_SIZE), TILE_SIZE>>>(dOut, dPack, dSizes, nChunks, pack.size() * sizeof(float));
    ERRCHECK(cudaPeekAtLastError());
    ERRCHECK(cudaMemcpy(out.data(), dOut, out.size() * sizeof(float), cudaMemcpyDeviceToHost));
    assert(in == out && "Unpack4_1 failed");
